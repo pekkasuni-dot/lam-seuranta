@@ -623,7 +623,7 @@ def hae_24h_data(tms_num, nyt_fin):
         from datetime import datetime as dt2
         aika = dt2(r["pvm"].year, r["pvm"].month, r["pvm"].day,
                    r["tunti"], 0, 0)
-        aika = aika.replace(tzinfo=timezone.utc) + timedelta(hours=3)
+        aika = aika.replace(tzinfo=timezone.utc)
         if aika >= raja:
             r["aika"] = aika
             suodatettu.append(r)
