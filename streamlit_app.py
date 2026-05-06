@@ -121,7 +121,7 @@ SELITTEET = {
     "KORKEA":     f"Korkea (+{RAJA_KORKEA}–{RAJA_KRIITTINEN}%)",
     "LIEVA":      f"Lievä (+{RAJA_LIEVA}–{RAJA_KORKEA}%)",
     "NORMAALI":   f"Normaali (±{RAJA_LIEVA}%)",
-    "LASKU":      f"Lasku (>{RAJA_LIEVA}% alle)",
+    "LASKU":      f"Lasku (>{RAJA_LIEVA}%)",
     "EI_DATAA":   "Ei historiadataa",
 }
 
@@ -393,14 +393,13 @@ def kulma_siirto(lon, lat, kulma_asteet, pituus):
 # ─────────────────────────────────────────────────────────────────
 
 def luo_kartta(asemat, rtdata, baselineet, kulmat):
-    """Luo Folium-kartan LAM-pisteistä ja suuntanuolista."""
+    """Luo Folium-kartan LAM-pisteistä, suuntanuolista ja luokkasuodattimesta."""
     kartta = folium.Map(
         location=[65.5, 26.0],
         zoom_start=6,
         tiles="CartoDB positron",
         control_scale=True,
     )
-    # Koko ruutu -nappi
     from folium.plugins import Fullscreen
     Fullscreen(
         position="topleft",
@@ -409,15 +408,30 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat):
         force_separate_button=True,
     ).add_to(kartta)
 
-    # Pisteiden koko luokan mukaan
     koot = {"KRIITTINEN": 14, "KORKEA": 12, "LIEVA": 10,
             "NORMAALI": 7, "LASKU": 9, "EI_DATAA": 6}
 
     yht_lkm = {k: 0 for k in VARIT}
 
-    # Kaksi erillistä layeria: nuolet ensin (alle), pisteet jälkeen (päälle)
+    # Nuolilayer (yksi, kaikkien alla)
     nuoli_layer = folium.FeatureGroup(name="Suuntanuolet", show=True)
-    piste_layer = folium.FeatureGroup(name="Asemat", show=True)
+
+    # Luokkakohtaiset layerit pisteitä varten – voi kytkeä päälle/pois kartalla
+    luokka_layerit = {
+        luokka: folium.FeatureGroup(
+            name=f"{emoji} {SELITTEET[luokka]}",
+            show=True
+        )
+        for luokka, emoji in [
+            ("KRIITTINEN", "🔴"),
+            ("KORKEA",     "🟠"),
+            ("LIEVA",      "🟡"),
+            ("NORMAALI",   "🟢"),
+            ("LASKU",      "🔵"),
+            ("EI_DATAA",   "⚫"),
+        ]
+    }
+    # piste_layer ei enää käytössä – korvattu luokkakohtaisilla
 
     for sid, asema in asemat.items():
         if asema.get("tila") == "REMOVED_TEMPORARILY":
@@ -505,7 +519,7 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat):
                     weight=0,
                 ).add_to(nuoli_layer)
 
-        # Piste piste_layeriin (piirtyy nuolten päälle)
+        # Piste luokkakohtaiseen layeriin
         folium.CircleMarker(
             location=[lat, lon],
             radius=koko,
@@ -515,19 +529,219 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat):
             fill_color=vari,
             fill_opacity=0.9,
             popup=folium.Popup(popup_html, max_width=280),
-            tooltip=f"{asema['nimi']}: {p_yht:+.0f}%",
-        ).add_to(piste_layer)
+            tooltip=f"{asema['nimi']}: {p_yht:+.0f}% | Klikkaa tiedot",
+        ).add_to(luokka_layerit[luokka])
 
-    # Lisää layerit kartalle: nuolet ensin, pisteet päälle
+    # Lisää layerit kartalle järjestyksessä
     nuoli_layer.add_to(kartta)
-    piste_layer.add_to(kartta)
-    folium.LayerControl().add_to(kartta)
+    for layer in luokka_layerit.values():
+        layer.add_to(kartta)
+    folium.LayerControl(collapsed=False, position="topright").add_to(kartta)
 
     return kartta, yht_lkm
 
 # ─────────────────────────────────────────────────────────────────
 # PÄÄOHJELMA
 # ─────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────
+# 24H AIKAJANA
+# ─────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=300, show_spinner=False)
+def hae_24h_data(tms_num, nyt_fin):
+    """
+    Hakee aseman 24 tunnin liikennedata tunneittain.
+    Palauttaa listan dict: {tunti, pvm, s1, s2, yht}
+    """
+    from datetime import timedelta
+    tulokset = []
+    nyt_tunti = nyt_fin.hour
+    nyt_pvm   = nyt_fin.date()
+    eilen     = (nyt_fin - timedelta(days=1)).date()
+
+    # Haetaan eilen ja tänään
+    for pvm in [eilen, nyt_pvm]:
+        yy  = str(pvm.year)[-2:].lstrip("0") or "0"
+        doy = pvm.timetuple().tm_yday
+        url = f"{BASE_URL}/api/tms/v1/history/raw/lamraw_{tms_num}_{yy}_{doy}.csv"
+        raw = hae_bytes(url, timeout=20)
+        if raw is None:
+            continue
+        # Laske ohitukset per tunti
+        tunti_laskuri = {}
+        try:
+            for rivi in csv.reader(
+                    io.StringIO(raw.decode("utf-8", errors="replace")),
+                    delimiter=";"):
+                if len(rivi) < 13:
+                    continue
+                try:
+                    t  = int(rivi[3])
+                    su = int(rivi[9])
+                    f  = int(rivi[12])
+                    if f != 0:
+                        continue
+                    if t not in tunti_laskuri:
+                        tunti_laskuri[t] = {"s1": 0, "s2": 0}
+                    if su == 1:   tunti_laskuri[t]["s1"] += 1
+                    elif su == 2: tunti_laskuri[t]["s2"] += 1
+                except ValueError:
+                    continue
+        except Exception:
+            continue
+
+        for t, v in tunti_laskuri.items():
+            tulokset.append({
+                "pvm":   pvm,
+                "tunti": t,
+                "s1":    v["s1"],
+                "s2":    v["s2"],
+                "yht":   v["s1"] + v["s2"],
+            })
+
+    # Suodata: viimeiset 24 tuntia
+    raja = nyt_fin - timedelta(hours=24)
+    suodatettu = []
+    for r in tulokset:
+        from datetime import datetime as dt2
+        aika = dt2(r["pvm"].year, r["pvm"].month, r["pvm"].day,
+                   r["tunti"], 0, 0)
+        aika = aika.replace(tzinfo=timezone.utc) + timedelta(hours=3)
+        if aika >= raja:
+            r["aika"] = aika
+            suodatettu.append(r)
+
+    return sorted(suodatettu, key=lambda x: x["aika"])
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def hae_24h_baseline(tms_num, nyt_fin):
+    """
+    Hakee tuntikohtaisen baselinen 24 tunnille.
+    Jokainen tunti lasketaan erikseen normaaleista vertailupäivistä.
+    """
+    from datetime import timedelta
+    baseline_per_tunti = {}
+    nyt_tunti = nyt_fin.hour
+
+    # Keraa kaikki tarvittavat tunnit (viimeiset 24)
+    tunnit = [(nyt_tunti - i) % 24 for i in range(24)]
+
+    for tunti in tunnit:
+        normaalit, _ = etsi_normaalit_paivat(nyt_fin, maara=4, max_viikkoja=16)
+        s1v, s2v = [], []
+        for pvm in normaalit:
+            s1, s2 = csv_hae_tunti(tms_num, pvm, tunti)
+            if s1 is not None: s1v.append(s1)
+            if s2 is not None: s2v.append(s2)
+        baseline_per_tunti[tunti] = {
+            "s1": trimmattu_keskiarvo(s1v) or 0,
+            "s2": trimmattu_keskiarvo(s2v) or 0,
+        }
+
+    return baseline_per_tunti
+
+
+@st.dialog("📊 Liikenteen aikajana", width="large")
+def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
+    """Modal-dialogi jossa näytetään 24h aikajana valitulle asemalle."""
+    import plotly.graph_objects as go
+
+    st.markdown(f"### {nimi}")
+    st.markdown("*Viimeiset 24 tuntia – S1 ja S2 erikseen*")
+
+    with st.spinner("Haetaan historiadataa..."):
+        data_24h = hae_24h_data(tms_num, nyt_fin)
+
+    if not data_24h:
+        st.warning("Historiadataa ei saatavilla tälle asemalle.")
+        return
+
+    with st.spinner("Lasketaan tuntikohtainen baseline..."):
+        baseline = hae_24h_baseline(tms_num, nyt_fin)
+
+    # Valmistele data kaaviota varten
+    ajat   = [r["aika"] for r in data_24h]
+    s1_nyt = [r["s1"]  for r in data_24h]
+    s2_nyt = [r["s2"]  for r in data_24h]
+    s1_bl  = [baseline.get(r["tunti"], {}).get("s1", 0) for r in data_24h]
+    s2_bl  = [baseline.get(r["tunti"], {}).get("s2", 0) for r in data_24h]
+
+    fig = go.Figure()
+
+    # Baseline-alueet (harmaa tausta)
+    fig.add_trace(go.Scatter(
+        x=ajat, y=s1_bl,
+        name="S1 baseline",
+        line=dict(color="#888888", dash="dash", width=1.5),
+        mode="lines",
+    ))
+    fig.add_trace(go.Scatter(
+        x=ajat, y=s2_bl,
+        name="S2 baseline",
+        line=dict(color="#aaaaaa", dash="dot", width=1.5),
+        mode="lines",
+    ))
+
+    # Toteutunut liikenne
+    fig.add_trace(go.Scatter(
+        x=ajat, y=s1_nyt,
+        name="S1 (kasvava suunta)",
+        line=dict(color="#3C82DC", width=2.5),
+        mode="lines+markers",
+        marker=dict(size=5),
+    ))
+    fig.add_trace(go.Scatter(
+        x=ajat, y=s2_nyt,
+        name="S2 (laskeva suunta)",
+        line=dict(color="#32B450", width=2.5),
+        mode="lines+markers",
+        marker=dict(size=5),
+    ))
+
+    fig.update_layout(
+        paper_bgcolor="#0f0f1a",
+        plot_bgcolor="#1a1a2e",
+        font=dict(color="#e0e0ff"),
+        xaxis=dict(
+            title="Aika",
+            gridcolor="#2a2a4a",
+            tickformat="%H:%M %d.%m.",
+        ),
+        yaxis=dict(
+            title="Ohituksia / tunti",
+            gridcolor="#2a2a4a",
+        ),
+        legend=dict(
+            bgcolor="#1a1a2e",
+            bordercolor="#3a3a5c",
+            borderwidth=1,
+        ),
+        hovermode="x unified",
+        height=400,
+        margin=dict(l=60, r=20, t=20, b=60),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Yhteenveto
+    if s1_nyt and s2_nyt:
+        viimeisin_s1 = s1_nyt[-1]
+        viimeisin_s2 = s2_nyt[-1]
+        bl_s1 = s1_bl[-1] if s1_bl else 1
+        bl_s2 = s2_bl[-1] if s2_bl else 1
+        c1, c2 = st.columns(2)
+        with c1:
+            p = (viimeisin_s1 - bl_s1) / bl_s1 * 100 if bl_s1 > 0 else 0
+            st.metric("S1 juuri nyt", f"{viimeisin_s1:.0f} ajon/h",
+                      f"{p:+.1f}% vs baseline")
+        with c2:
+            p = (viimeisin_s2 - bl_s2) / bl_s2 * 100 if bl_s2 > 0 else 0
+            st.metric("S2 juuri nyt", f"{viimeisin_s2:.0f} ajon/h",
+                      f"{p:+.1f}% vs baseline")
+
+
 
 def main():
     # Tarkista kirjautuminen ENSIMMAISENA ennen muuta renderointia
@@ -587,7 +801,7 @@ def main():
         - 🟠 Korkea: +{RAJA_KORKEA}–{RAJA_KRIITTINEN}%
         - 🟡 Lievä: +{RAJA_LIEVA}–{RAJA_KORKEA}%
         - 🟢 Normaali: ±{RAJA_LIEVA}%
-        - 🔵 Lasku: >{RAJA_LIEVA}% alle
+        - 🔵 Lasku: >{RAJA_LIEVA}%
         """)
         st.markdown("---")
         if st.button("🔄 Päivitä nyt", use_container_width=True):
@@ -661,9 +875,40 @@ def main():
         st.markdown(f"**Metodi:** Trimmattu keskiarvo (4 normaalia {vp_partitiivi}, "
                     f"klo {tunti:02d}:xx)")
 
+    # Aikajana-valinta sivupalkissa
+    with st.sidebar:
+        st.markdown("---")
+        st.markdown("### 📊 Aikajana")
+        st.markdown("*Valitse asema:*")
+        asema_nimet = {sid: a["nimi"] for sid, a in asemat.items()}
+        valittu_nimi = st.selectbox(
+            "Asema",
+            options=["– valitse –"] + sorted(asema_nimet.values()),
+            label_visibility="collapsed",
+        )
+        if valittu_nimi != "– valitse –":
+            # Etsi sid nimellä
+            valittu_sid = next(
+                (sid for sid, a in asemat.items() if a["nimi"] == valittu_nimi), None
+            )
+            if valittu_sid and st.button("📊 Näytä aikajana", use_container_width=True):
+                st.session_state["aikajana_sid"] = valittu_sid
+
     # Kartta
     st.markdown("*Klikkaa pistettä tarkempiin tietoihin. Nuolet näkyvät zoomaamalla lähemmäksi.*")
     st_folium(kartta, width="100%", height=750, returned_objects=[])
+
+    # Aikajana-modal
+    if "aikajana_sid" in st.session_state:
+        sid_val = st.session_state.pop("aikajana_sid")
+        asema_val = asemat.get(sid_val)
+        if asema_val and asema_val.get("tmsNum"):
+            nayta_aikajana(
+                sid=sid_val,
+                nimi=asema_val["nimi"],
+                tms_num=asema_val["tmsNum"],
+                nyt_fin=nyt_fin,
+            )
 
     # Viimeinen päivitys + automaattinen uudelleenlataus
     st.markdown(f"*Päivitetty: {nyt_fin.strftime('%d.%m.%Y %H:%M')} (Suomen aika)*")
@@ -675,3 +920,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
