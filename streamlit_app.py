@@ -1,4 +1,4 @@
-"""
+﻿"""
 LAM-evakuointiseuranta - Streamlit-sovellus
 ============================================
 Reaaliaikainen liikenteen poikkeamaseuranta Pohteen alueella.
@@ -567,16 +567,15 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat,
 @st.cache_data(ttl=300, show_spinner=False)
 def hae_24h_data(tms_num, nyt_fin):
     """
-    Hakee aseman 24 tunnin liikennedata tunneittain.
-    Palauttaa listan dict: {tunti, pvm, s1, s2, yht}
+    Hakee CSV-historiadata aikajanaa varten (eilen varmasti, tänään jos saatavilla).
+    Tänään CSV julkaistaan vasta seuraavana päivänä — puuttuva data täydennetään
+    session-snapshooteilla funktiossa nayta_aikajana.
     """
-    from datetime import timedelta
     tulokset = []
-    nyt_tunti = nyt_fin.hour
-    nyt_pvm   = nyt_fin.date()
-    eilen     = (nyt_fin - timedelta(days=1)).date()
+    nyt_pvm  = nyt_fin.date()
+    eilen    = (nyt_fin - timedelta(days=1)).date()
+    raja     = nyt_fin - timedelta(hours=24)
 
-    # Haetaan eilen ja tänään
     for pvm in [eilen, nyt_pvm]:
         yy  = str(pvm.year)[-2:].lstrip("0") or "0"
         doy = pvm.timetuple().tm_yday
@@ -584,7 +583,6 @@ def hae_24h_data(tms_num, nyt_fin):
         raw = hae_bytes(url, timeout=20)
         if raw is None:
             continue
-        # Laske ohitukset per tunti
         tunti_laskuri = {}
         try:
             for rivi in csv.reader(
@@ -608,27 +606,17 @@ def hae_24h_data(tms_num, nyt_fin):
             continue
 
         for t, v in tunti_laskuri.items():
+            aika = datetime(pvm.year, pvm.month, pvm.day, t, 0, 0).replace(tzinfo=timezone.utc)
+            if aika < raja:
+                continue
             tulokset.append({
-                "pvm":   pvm,
-                "tunti": t,
-                "s1":    v["s1"],
-                "s2":    v["s2"],
-                "yht":   v["s1"] + v["s2"],
+                "pvm": pvm, "tunti": t,
+                "s1": float(v["s1"]), "s2": float(v["s2"]),
+                "yht": float(v["s1"] + v["s2"]),
+                "aika": aika,
             })
 
-    # Suodata: viimeiset 24 tuntia
-    raja = nyt_fin - timedelta(hours=24)
-    suodatettu = []
-    for r in tulokset:
-        from datetime import datetime as dt2
-        aika = dt2(r["pvm"].year, r["pvm"].month, r["pvm"].day,
-                   r["tunti"], 0, 0)
-        aika = aika.replace(tzinfo=timezone.utc)
-        if aika >= raja:
-            r["aika"] = aika
-            suodatettu.append(r)
-
-    return sorted(suodatettu, key=lambda x: x["aika"])
+    return sorted(tulokset, key=lambda x: x["aika"])
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -659,6 +647,32 @@ def hae_24h_baseline(tms_num, nyt_fin):
     return baseline_per_tunti
 
 
+def tallenna_tuntisnapshootti(asemat, rtdata, nyt_fin):
+    """Tallentaa nykyisen tunnin reaaliaikalukemat session-muistiin aikajanaa varten."""
+    if "tuntidata" not in st.session_state:
+        st.session_state["tuntidata"] = {}
+    raja = nyt_fin - timedelta(hours=25)
+    tunti_key = (nyt_fin.date(), nyt_fin.hour)
+    # Siivoa yli 25h vanhat merkinnät
+    for sid in list(st.session_state["tuntidata"]):
+        st.session_state["tuntidata"][sid] = {
+            k: v for k, v in st.session_state["tuntidata"][sid].items()
+            if datetime(k[0].year, k[0].month, k[0].day, k[1]).replace(tzinfo=timezone.utc) >= raja
+        }
+    for sid, asema in asemat.items():
+        sdata = rtdata.get(sid, {})
+        s1 = sdata.get("OHITUKSET_60MIN_KIINTEA_SUUNTA1")
+        s2 = sdata.get("OHITUKSET_60MIN_KIINTEA_SUUNTA2")
+        if s1 is None and s2 is None:
+            continue
+        if sid not in st.session_state["tuntidata"]:
+            st.session_state["tuntidata"][sid] = {}
+        st.session_state["tuntidata"][sid][tunti_key] = {
+            "s1": float(s1 or 0),
+            "s2": float(s2 or 0),
+        }
+
+
 @st.dialog("📊 Liikenteen aikajana", width="large")
 def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
     """Modal-dialogi jossa näytetään 24h aikajana valitulle asemalle."""
@@ -668,7 +682,22 @@ def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
     st.markdown("*Viimeiset 24 tuntia – S1 ja S2 erikseen*")
 
     with st.spinner("Haetaan historiadataa..."):
-        data_24h = hae_24h_data(tms_num, nyt_fin)
+        csv_data = hae_24h_data(tms_num, nyt_fin)
+
+    # Täydennä tämän päivän puuttuvat tunnit session-snapshooteilla
+    raja = nyt_fin - timedelta(hours=24)
+    csv_tunnit = {(r["pvm"], r["tunti"]) for r in csv_data}
+    snap_data = []
+    for (pvm, tunti), vals in st.session_state.get("tuntidata", {}).get(sid, {}).items():
+        aika = datetime(pvm.year, pvm.month, pvm.day, tunti, 0, 0).replace(tzinfo=timezone.utc)
+        if aika >= raja and (pvm, tunti) not in csv_tunnit:
+            snap_data.append({
+                "pvm": pvm, "tunti": tunti,
+                "s1": vals["s1"], "s2": vals["s2"],
+                "yht": vals["s1"] + vals["s2"],
+                "aika": aika,
+            })
+    data_24h = sorted(csv_data + snap_data, key=lambda x: x["aika"])
 
     if not data_24h:
         st.warning("Historiadataa ei saatavilla tälle asemalle.")
@@ -876,6 +905,8 @@ def main():
     with st.spinner("Haetaan reaaliaikainen liikennedata..."):
         rtdata = hae_reaaliaikadata()
 
+    tallenna_tuntisnapshootti(asemat, rtdata, nyt_fin)
+
     with st.spinner("Haetaan suuntavakiot..."):
         kulmat = hae_suuntavakiot(tuple(sorted(asemat.keys())))
 
@@ -977,4 +1008,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
