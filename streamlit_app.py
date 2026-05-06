@@ -99,6 +99,14 @@ def tarkista_salasana():
 
 BASE_URL       = "https://tie.digitraffic.fi"
 ALUE_BBOX      = (23.5, 63.7, 29.5, 70.1)
+
+# Aluerajaukset: (bbox, kartan_keskipiste, zoom)
+ALUEET = {
+    "Koko alue": (ALUE_BBOX,               [65.5, 26.0], 6),
+    "Pohde":     ((23.5, 63.7, 29.5, 66.5), [65.0, 25.5], 7),
+    "Lappi":     ((23.5, 66.5, 29.5, 70.1), [68.0, 26.5], 7),
+}
+
 RAJA_LIEVA     = 30
 RAJA_KORKEA    = 80
 RAJA_KRIITTINEN = 150
@@ -392,11 +400,12 @@ def kulma_siirto(lon, lat, kulma_asteet, pituus):
 # KARTTA
 # ─────────────────────────────────────────────────────────────────
 
-def luo_kartta(asemat, rtdata, baselineet, kulmat):
+def luo_kartta(asemat, rtdata, baselineet, kulmat,
+               keskipiste=None, zoom=6):
     """Luo Folium-kartan LAM-pisteistä, suuntanuolista ja luokkasuodattimesta."""
     kartta = folium.Map(
-        location=[65.5, 26.0],
-        zoom_start=6,
+        location=keskipiste or [65.5, 26.0],
+        zoom_start=zoom,
         tiles="CartoDB positron",
         control_scale=True,
     )
@@ -489,6 +498,13 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat):
           <div style='font-size:10px;color:#999;margin-top:4px'>
             Baseline: {bl.get("arvot_s1","–")} | {bl.get("arvot_s2","–")}
           </div>
+          <a href='?aikajana_sid={sid}' target='_self'
+             style='display:block;margin-top:8px;padding:5px 10px;
+                    background:#2a2a5a;color:#a0a0ff;
+                    border:1px solid #4a4a9a;border-radius:5px;
+                    text-align:center;font-size:12px;text-decoration:none;'>
+            📊 Näytä aikajana
+          </a>
         </div>
         """
 
@@ -536,7 +552,7 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat):
     nuoli_layer.add_to(kartta)
     for layer in luokka_layerit.values():
         layer.add_to(kartta)
-    folium.LayerControl(collapsed=False, position="topright").add_to(kartta)
+    folium.LayerControl(collapsed=True, position="topright").add_to(kartta)
 
     return kartta, yht_lkm
 
@@ -794,6 +810,16 @@ def main():
         paivitys_min = st.slider(
             "Automaattinen päivitys (min)", 1, 15, 5
         )
+        if st.button("🔄 Päivitä nyt", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+        st.markdown("---")
+        st.markdown("### 🗺️ Alue")
+        valittu_alue = st.radio(
+            "Alue",
+            options=list(ALUEET.keys()),
+            label_visibility="collapsed",
+        )
         st.markdown("---")
         st.markdown("### 📊 Luokitusrajat")
         st.markdown(f"""
@@ -803,13 +829,21 @@ def main():
         - 🟢 Normaali: ±{RAJA_LIEVA}%
         - 🔵 Lasku: >{RAJA_LIEVA}%
         """)
-        st.markdown("---")
-        if st.button("🔄 Päivitä nyt", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
-        if st.button("🚪 Kirjaudu ulos", use_container_width=True):
-            st.session_state.kirjautunut = False
-            st.rerun()
+
+    # Tarkista aikajana-pyynto URL-parametreista (popup-nappi)
+    qp = st.query_params
+    if "aikajana_sid" in qp:
+        sid_str = qp["aikajana_sid"]
+        st.query_params.clear()
+        try:
+            sid_val = int(sid_str)
+            if sid_val not in st.session_state.get("asemat_cache", {}):
+                # Asemia ei viela ladattu - tallennetaan pyynto
+                st.session_state["aikajana_sid"] = sid_val
+            else:
+                st.session_state["aikajana_sid"] = sid_val
+        except ValueError:
+            pass
 
     # Aikaleimat
     nyt_utc = datetime.now(timezone.utc)
@@ -828,6 +862,17 @@ def main():
         st.error("Asematietojen haku epäonnistui. Tarkista verkkoyhteys.")
         return
 
+    # Suodata asemat valitun alueen mukaan
+    alue_bbox, kartta_keskipiste, kartta_zoom = ALUEET[valittu_alue]
+    xmin, ymin, xmax, ymax = alue_bbox
+    asemat = {
+        sid: a for sid, a in asemat.items()
+        if xmin <= a["lon"] <= xmax and ymin <= a["lat"] <= ymax
+    }
+
+    # Tallenna asemat sessioon aikajana-hakua varten
+    st.session_state["asemat_cache"] = asemat
+
     with st.spinner("Haetaan reaaliaikainen liikennedata..."):
         rtdata = hae_reaaliaikadata()
 
@@ -843,7 +888,11 @@ def main():
 
     # Luo kartta
     with st.spinner("Piirretään kartta..."):
-        kartta, yht_lkm = luo_kartta(asemat, rtdata, baselineet, kulmat)
+        kartta, yht_lkm = luo_kartta(
+            asemat, rtdata, baselineet, kulmat,
+            keskipiste=kartta_keskipiste,
+            zoom=kartta_zoom,
+        )
 
     # Tilastot yläreunaan
     st.markdown("<div style='padding-top:0.5rem'></div>", unsafe_allow_html=True)
@@ -910,8 +959,16 @@ def main():
                 nyt_fin=nyt_fin,
             )
 
-    # Viimeinen päivitys + automaattinen uudelleenlataus
+    # Viimeinen päivitys
     st.markdown(f"*Päivitetty: {nyt_fin.strftime('%d.%m.%Y %H:%M')} (Suomen aika)*")
+
+    # Kirjaudu ulos sivun alalaidassa
+    st.markdown("---")
+    col_tyhja, col_ulos = st.columns([4, 1])
+    with col_ulos:
+        if st.button("🚪 Kirjaudu ulos", use_container_width=True):
+            st.session_state.kirjautunut = False
+            st.rerun()
 
     # Automaattinen päivitys
     time.sleep(paivitys_min * 60)
