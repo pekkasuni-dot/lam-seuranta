@@ -400,6 +400,14 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat):
         tiles="CartoDB positron",
         control_scale=True,
     )
+    # Koko ruutu -nappi
+    from folium.plugins import Fullscreen
+    Fullscreen(
+        position="topleft",
+        title="Koko ruutu",
+        title_cancel="Poistu koko ruudusta",
+        force_separate_button=True,
+    ).add_to(kartta)
 
     # Pisteiden koko luokan mukaan
     koot = {"KRIITTINEN": 14, "KORKEA": 12, "LIEVA": 10,
@@ -529,6 +537,11 @@ def main():
     st.markdown("""
     <style>
     .stApp { background: #0f0f1a; }
+    /* Tiivistetään yläreunan padding */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 0.5rem !important;
+    }
     .metric-card {
         background: #1a1a2e;
         border-radius: 8px;
@@ -541,14 +554,26 @@ def main():
     </style>
     """, unsafe_allow_html=True)
 
-    # Otsikko
-    col_t, col_logo = st.columns([4, 1])
-    with col_t:
-        st.markdown("# 🚦 LAM-liikenneseuranta")
-        st.markdown("Reaaliaikainen liikenteen poikkeamaseuranta")
+    # Otsikko poistettu pääalueelta - on nyt sivupalkissa
 
     # Sivupalkki
     with st.sidebar:
+        # Otsikko sivupalkissa
+        st.markdown("""
+        <div style='
+            padding: 0.8rem 0 1rem 0;
+            border-bottom: 1px solid #3a3a5c;
+            margin-bottom: 1rem;
+        '>
+            <div style='font-size:1.3rem;font-weight:700;color:#e0e0ff;
+                        line-height:1.2;'>
+                🚦 LAM-liikenne&shy;seuranta
+            </div>
+            <div style='font-size:0.75rem;color:#888;margin-top:0.3rem;'>
+                Reaaliaikainen liikenteen poikkeamaseuranta
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         st.markdown("## ⚙️ Asetukset")
 
         paivitys_min = st.slider(
@@ -637,7 +662,7 @@ def main():
     # Kartta
     st.markdown("### 🗺️ Liikennekartta")
     st.markdown("*Klikkaa pistettä tarkempiin tietoihin. Nuolet näkyvät zoomaamalla lähemmäksi.*")
-    st_folium(kartta, width="100%", height=650, returned_objects=[])
+    st_folium(kartta, width="100%", height=750, returned_objects=[])
 
     # Viimeinen päivitys + automaattinen uudelleenlataus
     st.markdown(f"*Päivitetty: {nyt_fin.strftime('%d.%m.%Y %H:%M')} (Suomen aika)*")
