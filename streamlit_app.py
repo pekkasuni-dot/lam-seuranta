@@ -47,32 +47,28 @@ def tarkista_salasana():
         st.session_state.kirjautunut = False
 
     if not st.session_state.kirjautunut:
+        # Piilotetaan Streamlitin oletussisältö kirjautumisen ajaksi
         st.markdown("""
         <style>
-        .login-box {
-            max-width: 400px;
-            margin: 100px auto;
-            padding: 2rem;
-            background: #1a1a2e;
-            border-radius: 12px;
-            border: 1px solid #e94560;
-        }
+        [data-testid="stSidebar"] {display: none;}
+        [data-testid="stHeader"] {display: none;}
         </style>
         """, unsafe_allow_html=True)
 
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
+            st.markdown("<br><br>", unsafe_allow_html=True)
             st.markdown("## 🚦 LAM-liikenneseuranta")
             st.markdown("#### Kirjaudu sisään")
             salasana = st.text_input("Salasana", type="password", key="pw_input")
             if st.button("Kirjaudu", use_container_width=True):
-                # Salasana Streamlit Cloudissa: Asetukset -> Secrets -> PASSWORD = "salasanasi"
                 oikea = st.secrets.get("PASSWORD", "demo2026")
                 if salasana == oikea:
                     st.session_state.kirjautunut = True
                     st.rerun()
                 else:
                     st.error("Väärä salasana")
+        st.stop()  # Pysaytetaan renderöinti tahan - paasivu ei nayta lainkaan
         return False
     return True
 
@@ -390,6 +386,10 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat):
 
     yht_lkm = {k: 0 for k in VARIT}
 
+    # Kaksi erillistä layeria: nuolet ensin (alle), pisteet jälkeen (päälle)
+    nuoli_layer = folium.FeatureGroup(name="Suuntanuolet", show=True)
+    piste_layer = folium.FeatureGroup(name="Asemat", show=True)
+
     for sid, asema in asemat.items():
         if asema.get("tila") == "REMOVED_TEMPORARILY":
             continue
@@ -449,25 +449,12 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat):
         </div>
         """
 
-        # Piste
-        folium.CircleMarker(
-            location=[lat, lon],
-            radius=koko,
-            color="white",
-            weight=1.5,
-            fill=True,
-            fill_color=vari,
-            fill_opacity=0.9,
-            popup=folium.Popup(popup_html, max_width=280),
-            tooltip=f"{asema['nimi']}: {p_yht:+.0f}%",
-        ).add_to(kartta)
-
-        # Suuntanuolet – piirretään vain jos data ok
+        # Suuntanuolet nuoli_layeriin (piirtyy pisteiden alle)
         if bl["ok"]:
             nuoli_pituus = 0.012
             for kulma, s_pct in [
-                (kulma_tie,             p_s1),
-                ((kulma_tie+180)%360,   p_s2),
+                (kulma_tie,           p_s1),
+                ((kulma_tie+180)%360, p_s2),
             ]:
                 lon2, lat2 = kulma_siirto(lon, lat, kulma, nuoli_pituus)
                 nuoli_vari = VARIT[poikkeama_luokka(s_pct)]
@@ -476,8 +463,7 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat):
                     color=nuoli_vari,
                     weight=2.5,
                     opacity=0.85,
-                ).add_to(kartta)
-                # Nuolenpää pienellä kolmiolla päässä
+                ).add_to(nuoli_layer)
                 folium.RegularPolygonMarker(
                     location=[lat2, lon2],
                     number_of_sides=3,
@@ -488,7 +474,25 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat):
                     fill_color=nuoli_vari,
                     fill_opacity=1.0,
                     weight=0,
-                ).add_to(kartta)
+                ).add_to(nuoli_layer)
+
+        # Piste piste_layeriin (piirtyy nuolten päälle)
+        folium.CircleMarker(
+            location=[lat, lon],
+            radius=koko,
+            color="white",
+            weight=1.5,
+            fill=True,
+            fill_color=vari,
+            fill_opacity=0.9,
+            popup=folium.Popup(popup_html, max_width=280),
+            tooltip=f"{asema['nimi']}: {p_yht:+.0f}%",
+        ).add_to(piste_layer)
+
+    # Lisää layerit kartalle: nuolet ensin, pisteet päälle
+    nuoli_layer.add_to(kartta)
+    piste_layer.add_to(kartta)
+    folium.LayerControl().add_to(kartta)
 
     return kartta, yht_lkm
 
@@ -581,6 +585,7 @@ def main():
         kartta, yht_lkm = luo_kartta(asemat, rtdata, baselineet, kulmat)
 
     # Tilastot yläreunaan
+    st.markdown("#### Asemien tila")
     cols = st.columns(6)
     emojit = {"KRIITTINEN":"🔴","KORKEA":"🟠","LIEVA":"🟡",
                "NORMAALI":"🟢","LASKU":"🔵","EI_DATAA":"⚫"}
@@ -588,7 +593,7 @@ def main():
         with cols[i]:
             st.metric(
                 label=f"{emojit[luokka]} {luokka.capitalize()}",
-                value=f"{lkm} as.",
+                value=str(lkm),
             )
 
     # Varoitus jos poikkeavia
