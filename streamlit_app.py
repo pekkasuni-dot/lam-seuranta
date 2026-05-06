@@ -706,17 +706,25 @@ def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
     with st.spinner("Lasketaan tuntikohtainen baseline..."):
         baseline = hae_24h_baseline(tms_num, nyt_fin)
 
-    # Valintatyökalu
-    nakyma = st.radio(
-        "Näytä",
-        options=["Kokonaismäärä", "S1", "S2", "Kaikki"],
-        index=0,
-        horizontal=True,
-        key=f"aikajana_nakyma_{sid}",
-    )
-    nayta_yht = nakyma in ("Kokonaismäärä", "Kaikki")
-    nayta_s1  = nakyma in ("S1", "Kaikki")
-    nayta_s2  = nakyma in ("S2", "Kaikki")
+    # Valintatyökalu (toggle-napit, oletuksena Kokonaismäärä)
+    col_pills, col_sulje = st.columns([4, 1])
+    with col_pills:
+        valitut = st.pills(
+            "Näytä",
+            options=["Kokonaismäärä", "S1", "S2"],
+            selection_mode="multi",
+            default=["Kokonaismäärä"],
+            key=f"aikajana_pills_{sid}",
+        ) or ["Kokonaismäärä"]
+    with col_sulje:
+        st.markdown("<div style='margin-top:1.7rem'>", unsafe_allow_html=True)
+        if st.button("✕ Sulje", key=f"sulje_{sid}", use_container_width=True):
+            del st.session_state["aikajana_sid"]
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+    nayta_yht = "Kokonaismäärä" in valitut
+    nayta_s1  = "S1" in valitut
+    nayta_s2  = "S2" in valitut
 
     # Valmistele toteutunut data kaaviota varten
     ajat    = [r["aika"] for r in data_24h]
@@ -1032,17 +1040,21 @@ def main():
     st.markdown("*Klikkaa pistettä tarkempiin tietoihin. Nuolet näkyvät zoomaamalla lähemmäksi.*")
     st_folium(kartta, width="100%", height=750, returned_objects=[])
 
-    # Aikajana-modal (ei poisteta session statest, jotta radio-valinnat toimivat)
-    if "aikajana_sid" in st.session_state:
-        sid_val = st.session_state["aikajana_sid"]
-        asema_val = asemat.get(sid_val)
-        if asema_val and asema_val.get("tmsNum"):
-            nayta_aikajana(
-                sid=sid_val,
-                nimi=asema_val["nimi"],
-                tms_num=asema_val["tmsNum"],
-                nyt_fin=nyt_fin,
-            )
+    # Aikajana-modal (@st.fragment: vain fragmentti rerenderöityy widget-muutoksissa)
+    @st.fragment
+    def _aikajana_fragmentti():
+        if "aikajana_sid" in st.session_state:
+            _sid = st.session_state["aikajana_sid"]
+            _asema = asemat.get(_sid)
+            if _asema and _asema.get("tmsNum"):
+                nayta_aikajana(
+                    sid=_sid,
+                    nimi=_asema["nimi"],
+                    tms_num=_asema["tmsNum"],
+                    nyt_fin=nyt_fin,
+                )
+
+    _aikajana_fragmentti()
 
     # Viimeinen päivitys
     st.markdown(f"*Päivitetty: {nyt_fin.strftime('%d.%m.%Y %H:%M')} (Suomen aika)*")
