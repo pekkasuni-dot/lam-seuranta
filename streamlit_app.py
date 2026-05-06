@@ -42,45 +42,55 @@ st.set_page_config(
 # ─────────────────────────────────────────────────────────────────
 
 def tarkista_salasana():
-    """Yksinkertainen salasanasuojaus Streamlit session_state:n avulla."""
+    """
+    Salasanasuojaus joka toimii Streamlit Cloudissa.
+    Nayttaa VAIN kirjautumissivun ennen kirjautumista
+    kayttamalla st.stop() ja erillista sivurakennetta.
+    """
     if "kirjautunut" not in st.session_state:
         st.session_state.kirjautunut = False
 
     if not st.session_state.kirjautunut:
-        # Piilotetaan kaikki Streamlit UI-elementit kirjautumisen ajaksi
+        # Nayta kirjautumissivu - ei mitaan muuta
         st.markdown("""
         <style>
-        [data-testid="stSidebar"] {display: none !important;}
-        [data-testid="stHeader"] {display: none !important;}
-        [data-testid="stToolbar"] {display: none !important;}
-        [data-testid="stDecoration"] {display: none !important;}
-        section[data-testid="stSidebarContent"] {display: none !important;}
-        /* Piilota oikean ylakulman widget-alue */
-        .stApp > header {display: none !important;}
-        #MainMenu {display: none !important;}
-        footer {display: none !important;}
-        /* Piilota mahdollinen ghost-elementti */
-        [data-testid="stVerticalBlock"] > div:last-child > div[data-testid="column"] {
-            display: none !important;
-        }
+        /* Piilota sivupalkki ja header kirjautumissivulla */
+        [data-testid="stSidebar"] {visibility: hidden; width: 0px !important;}
+        [data-testid="stSidebarNav"] {display: none !important;}
+        section.main > div {padding-top: 0rem;}
         </style>
         """, unsafe_allow_html=True)
 
-        col1, col2, col3 = st.columns([1, 2, 1])
+        # Tyhjaa sivu - kirjautumislomake keskella
+        st.markdown("<br>" * 5, unsafe_allow_html=True)
+        col1, col2, col3 = st.columns([1.5, 2, 1.5])
         with col2:
-            st.markdown("<br><br>", unsafe_allow_html=True)
-            st.markdown("## 🚦 LAM-liikenneseuranta")
-            st.markdown("#### Kirjaudu sisään")
-            salasana = st.text_input("Salasana", type="password", key="pw_input")
-            if st.button("Kirjaudu", use_container_width=True):
+            st.markdown("""
+            <div style='
+                background: #1a1a2e;
+                border: 1px solid #3a3a5c;
+                border-radius: 12px;
+                padding: 2rem;
+                text-align: center;
+            '>
+            <h2 style='color:#e0e0ff;margin-bottom:0.5rem'>🚦 LAM-liikenneseuranta</h2>
+            <p style='color:#888;margin-bottom:1.5rem'>Kirjaudu sisään jatkaaksesi</p>
+            </div>
+            """, unsafe_allow_html=True)
+            salasana = st.text_input(
+                "Salasana", type="password", key="pw_input",
+                label_visibility="collapsed",
+                placeholder="Salasana"
+            )
+            if st.button("Kirjaudu →", use_container_width=True, type="primary"):
                 oikea = st.secrets.get("PASSWORD", "demo2026")
                 if salasana == oikea:
                     st.session_state.kirjautunut = True
                     st.rerun()
                 else:
                     st.error("Väärä salasana")
-        st.stop()  # Pysaytetaan renderöinti tahan - paasivu ei nayta lainkaan
-        return False
+        # KRIITTINEN: st.stop() estaa kaiken muun renderoimisen
+        st.stop()
     return True
 
 # ─────────────────────────────────────────────────────────────────
