@@ -530,8 +530,9 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat):
 # ─────────────────────────────────────────────────────────────────
 
 def main():
-    if not tarkista_salasana():
-        return
+    # Tarkista kirjautuminen ENSIMMAISENA ennen muuta renderointia
+    # tarkista_salasana() kutsuu st.stop() jos ei kirjautunut
+    tarkista_salasana()
 
     # CSS
     st.markdown("""
@@ -631,6 +632,7 @@ def main():
         kartta, yht_lkm = luo_kartta(asemat, rtdata, baselineet, kulmat)
 
     # Tilastot yläreunaan
+    st.markdown("<div style='padding-top:0.5rem'></div>", unsafe_allow_html=True)
     st.markdown("#### Asemien tila")
     cols = st.columns(6)
     emojit = {"KRIITTINEN":"🔴","KORKEA":"🟠","LIEVA":"🟡",
@@ -660,7 +662,6 @@ def main():
                     f"klo {tunti:02d}:xx)")
 
     # Kartta
-    st.markdown("### 🗺️ Liikennekartta")
     st.markdown("*Klikkaa pistettä tarkempiin tietoihin. Nuolet näkyvät zoomaamalla lähemmäksi.*")
     st_folium(kartta, width="100%", height=750, returned_objects=[])
 
