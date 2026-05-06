@@ -47,11 +47,22 @@ def tarkista_salasana():
         st.session_state.kirjautunut = False
 
     if not st.session_state.kirjautunut:
-        # Piilotetaan Streamlitin oletussisältö kirjautumisen ajaksi
+        # Piilotetaan kaikki Streamlit UI-elementit kirjautumisen ajaksi
         st.markdown("""
         <style>
-        [data-testid="stSidebar"] {display: none;}
-        [data-testid="stHeader"] {display: none;}
+        [data-testid="stSidebar"] {display: none !important;}
+        [data-testid="stHeader"] {display: none !important;}
+        [data-testid="stToolbar"] {display: none !important;}
+        [data-testid="stDecoration"] {display: none !important;}
+        section[data-testid="stSidebarContent"] {display: none !important;}
+        /* Piilota oikean ylakulman widget-alue */
+        .stApp > header {display: none !important;}
+        #MainMenu {display: none !important;}
+        footer {display: none !important;}
+        /* Piilota mahdollinen ghost-elementti */
+        [data-testid="stVerticalBlock"] > div:last-child > div[data-testid="column"] {
+            display: none !important;
+        }
         </style>
         """, unsafe_allow_html=True)
 
@@ -608,7 +619,9 @@ def main():
         st.markdown(f"**Vertailupäivät:** {', '.join(str(p) for p in normaalit_pvmt)}")
         if ohitetut:
             st.markdown(f"**Ohitettu pyhien takia:** {', '.join(str(p) for p in ohitetut)}")
-        st.markdown(f"**Metodi:** Trimmattu keskiarvo (4 normaalia {vp_str}ta, "
+        vp_partitiivi = ["maanantaita","tiistaita","keskiviikkoa",
+                          "torstaina","perjantaita","lauantaita","sunnuntaita"][nyt_fin.weekday()]
+        st.markdown(f"**Metodi:** Trimmattu keskiarvo (4 normaalia {vp_partitiivi}, "
                     f"klo {tunti:02d}:xx)")
 
     # Kartta
