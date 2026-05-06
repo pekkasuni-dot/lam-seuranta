@@ -718,35 +718,49 @@ def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
     nayta_s1  = nakyma in ("S1", "Kaikki")
     nayta_s2  = nakyma in ("S2", "Kaikki")
 
-    # Valmistele data kaaviota varten
+    # Valmistele toteutunut data kaaviota varten
     ajat    = [r["aika"] for r in data_24h]
     s1_nyt  = [r["s1"]  for r in data_24h]
     s2_nyt  = [r["s2"]  for r in data_24h]
     yht_nyt = [r["yht"] for r in data_24h]
-    s1_bl   = [baseline.get(r["tunti"], {}).get("s1", 0) for r in data_24h]
-    s2_bl   = [baseline.get(r["tunti"], {}).get("s2", 0) for r in data_24h]
-    yht_bl  = [s1_bl[i] + s2_bl[i] for i in range(len(s1_bl))]
+
+    # Luo täysi 24h tuntisarja baselinelle (riippumaton todellisesta datasta)
+    bl_raja = nyt_fin - timedelta(hours=24)
+    bl_alku = datetime(bl_raja.year, bl_raja.month, bl_raja.day,
+                       bl_raja.hour, 0, 0, tzinfo=timezone.utc)
+    bl_loppu = datetime(nyt_fin.year, nyt_fin.month, nyt_fin.day,
+                        nyt_fin.hour, 0, 0, tzinfo=timezone.utc)
+    bl_ajat, bl_s1_full, bl_s2_full, bl_yht_full = [], [], [], []
+    t = bl_alku
+    while t <= bl_loppu:
+        s1v = baseline.get(t.hour, {}).get("s1", 0)
+        s2v = baseline.get(t.hour, {}).get("s2", 0)
+        bl_ajat.append(t)
+        bl_s1_full.append(s1v)
+        bl_s2_full.append(s2v)
+        bl_yht_full.append(s1v + s2v)
+        t += timedelta(hours=1)
 
     fig = go.Figure()
 
-    # Baseline-viivat
+    # Baseline-viivat (koko 24h)
     if nayta_yht:
         fig.add_trace(go.Scatter(
-            x=ajat, y=yht_bl,
+            x=bl_ajat, y=bl_yht_full,
             name="Yht. baseline",
             line=dict(color="#888888", dash="dash", width=1.5),
             mode="lines",
         ))
     if nayta_s1:
         fig.add_trace(go.Scatter(
-            x=ajat, y=s1_bl,
+            x=bl_ajat, y=bl_s1_full,
             name="S1 baseline",
             line=dict(color="#5a8fd0", dash="dash", width=1.5),
             mode="lines",
         ))
     if nayta_s2:
         fig.add_trace(go.Scatter(
-            x=ajat, y=s2_bl,
+            x=bl_ajat, y=bl_s2_full,
             name="S2 baseline",
             line=dict(color="#28904a", dash="dash", width=1.5),
             mode="lines",
@@ -806,17 +820,19 @@ def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
     # Yhteenveto
     if data_24h:
         viimeisin = data_24h[-1]
+        # Hae baseline viimeisimmälle tunnille
+        bl_tunti = baseline.get(viimeisin["tunti"], {})
         metrics = []
         if nayta_yht:
-            bl = yht_bl[-1] if yht_bl else 1
+            bl = (bl_tunti.get("s1", 0) or 0) + (bl_tunti.get("s2", 0) or 0)
             p = (viimeisin["yht"] - bl) / bl * 100 if bl > 0 else 0
             metrics.append(("Yhteensä juuri nyt", f"{viimeisin['yht']:.0f} ajon/h", f"{p:+.1f}% vs baseline"))
         if nayta_s1:
-            bl = s1_bl[-1] if s1_bl else 1
+            bl = bl_tunti.get("s1", 0) or 0
             p = (viimeisin["s1"] - bl) / bl * 100 if bl > 0 else 0
             metrics.append(("S1 juuri nyt", f"{viimeisin['s1']:.0f} ajon/h", f"{p:+.1f}% vs baseline"))
         if nayta_s2:
-            bl = s2_bl[-1] if s2_bl else 1
+            bl = bl_tunti.get("s2", 0) or 0
             p = (viimeisin["s2"] - bl) / bl * 100 if bl > 0 else 0
             metrics.append(("S2 juuri nyt", f"{viimeisin['s2']:.0f} ajon/h", f"{p:+.1f}% vs baseline"))
         if metrics:
@@ -1016,9 +1032,9 @@ def main():
     st.markdown("*Klikkaa pistettä tarkempiin tietoihin. Nuolet näkyvät zoomaamalla lähemmäksi.*")
     st_folium(kartta, width="100%", height=750, returned_objects=[])
 
-    # Aikajana-modal
+    # Aikajana-modal (ei poisteta session statest, jotta radio-valinnat toimivat)
     if "aikajana_sid" in st.session_state:
-        sid_val = st.session_state.pop("aikajana_sid")
+        sid_val = st.session_state["aikajana_sid"]
         asema_val = asemat.get(sid_val)
         if asema_val and asema_val.get("tmsNum"):
             nayta_aikajana(
