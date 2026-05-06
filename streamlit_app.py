@@ -673,13 +673,21 @@ def tallenna_tuntisnapshootti(asemat, rtdata, nyt_fin):
         }
 
 
-@st.dialog("📊 Liikenteen aikajana", width="large")
 def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
-    """Modal-dialogi jossa näytetään 24h aikajana valitulle asemalle."""
+    """Renderöi 24h aikajana inline kartan alle."""
     import plotly.graph_objects as go
 
-    st.markdown(f"### {nimi}")
-    st.markdown("*Viimeiset 24 tuntia – S1 ja S2 erikseen*")
+    st.markdown("---")
+    col_otsikko, col_sulje = st.columns([5, 1])
+    with col_otsikko:
+        st.markdown(f"### 📊 {nimi} — Liikenteen aikajana")
+        st.markdown("*Viimeiset 24 tuntia*")
+    with col_sulje:
+        st.markdown("<div style='margin-top:1.5rem'>", unsafe_allow_html=True)
+        if st.button("✕ Sulje", key=f"sulje_{sid}", use_container_width=True):
+            del st.session_state["aikajana_sid"]
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with st.spinner("Haetaan historiadataa..."):
         csv_data = hae_24h_data(tms_num, nyt_fin)
@@ -707,21 +715,13 @@ def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
         baseline = hae_24h_baseline(tms_num, nyt_fin)
 
     # Valintatyökalu (toggle-napit, oletuksena Kokonaismäärä)
-    col_pills, col_sulje = st.columns([4, 1])
-    with col_pills:
-        valitut = st.pills(
-            "Näytä",
-            options=["Kokonaismäärä", "S1", "S2"],
-            selection_mode="multi",
-            default=["Kokonaismäärä"],
-            key=f"aikajana_pills_{sid}",
-        ) or ["Kokonaismäärä"]
-    with col_sulje:
-        st.markdown("<div style='margin-top:1.7rem'>", unsafe_allow_html=True)
-        if st.button("✕ Sulje", key=f"sulje_{sid}", use_container_width=True):
-            del st.session_state["aikajana_sid"]
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+    valitut = st.pills(
+        "Näytä",
+        options=["Kokonaismäärä", "S1", "S2"],
+        selection_mode="multi",
+        default=["Kokonaismäärä"],
+        key=f"aikajana_pills_{sid}",
+    ) or ["Kokonaismäärä"]
     nayta_yht = "Kokonaismäärä" in valitut
     nayta_s1  = "S1" in valitut
     nayta_s2  = "S2" in valitut
@@ -920,6 +920,10 @@ def main():
         - 🟢 Normaali: ±{RAJA_LIEVA}%
         - 🔵 Lasku: >{RAJA_LIEVA}%
         """)
+        st.markdown("---")
+        if st.button("🚪 Kirjaudu ulos", use_container_width=True):
+            st.session_state.kirjautunut = False
+            st.rerun()
 
     # Tarkista aikajana-pyynto URL-parametreista (popup-nappi)
     qp = st.query_params
@@ -1017,55 +1021,24 @@ def main():
         st.markdown(f"**Metodi:** Trimmattu keskiarvo (4 normaalia {vp_partitiivi}, "
                     f"klo {tunti:02d}:xx)")
 
-    # Aikajana-valinta sivupalkissa
-    with st.sidebar:
-        st.markdown("---")
-        st.markdown("### 📊 Aikajana")
-        st.markdown("*Valitse asema:*")
-        asema_nimet = {sid: a["nimi"] for sid, a in asemat.items()}
-        valittu_nimi = st.selectbox(
-            "Asema",
-            options=["– valitse –"] + sorted(asema_nimet.values()),
-            label_visibility="collapsed",
-        )
-        if valittu_nimi != "– valitse –":
-            # Etsi sid nimellä
-            valittu_sid = next(
-                (sid for sid, a in asemat.items() if a["nimi"] == valittu_nimi), None
-            )
-            if valittu_sid and st.button("📊 Näytä aikajana", use_container_width=True):
-                st.session_state["aikajana_sid"] = valittu_sid
-
     # Kartta
-    st.markdown("*Klikkaa pistettä tarkempiin tietoihin. Nuolet näkyvät zoomaamalla lähemmäksi.*")
+    st.markdown("*Klikkaa asemaa kartalla nähdäksesi tiedot ja aikajananapin.*")
     st_folium(kartta, width="100%", height=750, returned_objects=[])
 
-    # Aikajana-modal (@st.fragment: vain fragmentti rerenderöityy widget-muutoksissa)
-    @st.fragment
-    def _aikajana_fragmentti():
-        if "aikajana_sid" in st.session_state:
-            _sid = st.session_state["aikajana_sid"]
-            _asema = asemat.get(_sid)
-            if _asema and _asema.get("tmsNum"):
-                nayta_aikajana(
-                    sid=_sid,
-                    nimi=_asema["nimi"],
-                    tms_num=_asema["tmsNum"],
-                    nyt_fin=nyt_fin,
-                )
-
-    _aikajana_fragmentti()
+    # Aikajana inline kartan alla
+    if "aikajana_sid" in st.session_state:
+        _sid = st.session_state["aikajana_sid"]
+        _asema = asemat.get(_sid)
+        if _asema and _asema.get("tmsNum"):
+            nayta_aikajana(
+                sid=_sid,
+                nimi=_asema["nimi"],
+                tms_num=_asema["tmsNum"],
+                nyt_fin=nyt_fin,
+            )
 
     # Viimeinen päivitys
     st.markdown(f"*Päivitetty: {nyt_fin.strftime('%d.%m.%Y %H:%M')} (Suomen aika)*")
-
-    # Kirjaudu ulos sivun alalaidassa
-    st.markdown("---")
-    col_tyhja, col_ulos = st.columns([4, 1])
-    with col_ulos:
-        if st.button("🚪 Kirjaudu ulos", use_container_width=True):
-            st.session_state.kirjautunut = False
-            st.rerun()
 
     # Automaattinen päivitys
     time.sleep(paivitys_min * 60)
