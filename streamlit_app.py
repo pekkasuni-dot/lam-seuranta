@@ -706,44 +706,77 @@ def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
     with st.spinner("Lasketaan tuntikohtainen baseline..."):
         baseline = hae_24h_baseline(tms_num, nyt_fin)
 
+    # Valintatyökalu
+    nakyma = st.radio(
+        "Näytä",
+        options=["Kokonaismäärä", "S1", "S2", "Kaikki"],
+        index=0,
+        horizontal=True,
+        key=f"aikajana_nakyma_{sid}",
+    )
+    nayta_yht = nakyma in ("Kokonaismäärä", "Kaikki")
+    nayta_s1  = nakyma in ("S1", "Kaikki")
+    nayta_s2  = nakyma in ("S2", "Kaikki")
+
     # Valmistele data kaaviota varten
-    ajat   = [r["aika"] for r in data_24h]
-    s1_nyt = [r["s1"]  for r in data_24h]
-    s2_nyt = [r["s2"]  for r in data_24h]
-    s1_bl  = [baseline.get(r["tunti"], {}).get("s1", 0) for r in data_24h]
-    s2_bl  = [baseline.get(r["tunti"], {}).get("s2", 0) for r in data_24h]
+    ajat    = [r["aika"] for r in data_24h]
+    s1_nyt  = [r["s1"]  for r in data_24h]
+    s2_nyt  = [r["s2"]  for r in data_24h]
+    yht_nyt = [r["yht"] for r in data_24h]
+    s1_bl   = [baseline.get(r["tunti"], {}).get("s1", 0) for r in data_24h]
+    s2_bl   = [baseline.get(r["tunti"], {}).get("s2", 0) for r in data_24h]
+    yht_bl  = [s1_bl[i] + s2_bl[i] for i in range(len(s1_bl))]
 
     fig = go.Figure()
 
-    # Baseline-alueet (harmaa tausta)
-    fig.add_trace(go.Scatter(
-        x=ajat, y=s1_bl,
-        name="S1 baseline",
-        line=dict(color="#888888", dash="dash", width=1.5),
-        mode="lines",
-    ))
-    fig.add_trace(go.Scatter(
-        x=ajat, y=s2_bl,
-        name="S2 baseline",
-        line=dict(color="#aaaaaa", dash="dot", width=1.5),
-        mode="lines",
-    ))
+    # Baseline-viivat
+    if nayta_yht:
+        fig.add_trace(go.Scatter(
+            x=ajat, y=yht_bl,
+            name="Yht. baseline",
+            line=dict(color="#888888", dash="dash", width=1.5),
+            mode="lines",
+        ))
+    if nayta_s1:
+        fig.add_trace(go.Scatter(
+            x=ajat, y=s1_bl,
+            name="S1 baseline",
+            line=dict(color="#5a8fd0", dash="dash", width=1.5),
+            mode="lines",
+        ))
+    if nayta_s2:
+        fig.add_trace(go.Scatter(
+            x=ajat, y=s2_bl,
+            name="S2 baseline",
+            line=dict(color="#28904a", dash="dash", width=1.5),
+            mode="lines",
+        ))
 
     # Toteutunut liikenne
-    fig.add_trace(go.Scatter(
-        x=ajat, y=s1_nyt,
-        name="S1 (kasvava suunta)",
-        line=dict(color="#3C82DC", width=2.5),
-        mode="lines+markers",
-        marker=dict(size=5),
-    ))
-    fig.add_trace(go.Scatter(
-        x=ajat, y=s2_nyt,
-        name="S2 (laskeva suunta)",
-        line=dict(color="#32B450", width=2.5),
-        mode="lines+markers",
-        marker=dict(size=5),
-    ))
+    if nayta_yht:
+        fig.add_trace(go.Scatter(
+            x=ajat, y=yht_nyt,
+            name="Yhteensä",
+            line=dict(color="#FF8C00", width=2.5),
+            mode="lines+markers",
+            marker=dict(size=5),
+        ))
+    if nayta_s1:
+        fig.add_trace(go.Scatter(
+            x=ajat, y=s1_nyt,
+            name="S1 (kasvava suunta)",
+            line=dict(color="#3C82DC", width=2.5),
+            mode="lines+markers",
+            marker=dict(size=5),
+        ))
+    if nayta_s2:
+        fig.add_trace(go.Scatter(
+            x=ajat, y=s2_nyt,
+            name="S2 (laskeva suunta)",
+            line=dict(color="#32B450", width=2.5),
+            mode="lines+markers",
+            marker=dict(size=5),
+        ))
 
     fig.update_layout(
         paper_bgcolor="#0f0f1a",
@@ -771,20 +804,25 @@ def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
     st.plotly_chart(fig, use_container_width=True)
 
     # Yhteenveto
-    if s1_nyt and s2_nyt:
-        viimeisin_s1 = s1_nyt[-1]
-        viimeisin_s2 = s2_nyt[-1]
-        bl_s1 = s1_bl[-1] if s1_bl else 1
-        bl_s2 = s2_bl[-1] if s2_bl else 1
-        c1, c2 = st.columns(2)
-        with c1:
-            p = (viimeisin_s1 - bl_s1) / bl_s1 * 100 if bl_s1 > 0 else 0
-            st.metric("S1 juuri nyt", f"{viimeisin_s1:.0f} ajon/h",
-                      f"{p:+.1f}% vs baseline")
-        with c2:
-            p = (viimeisin_s2 - bl_s2) / bl_s2 * 100 if bl_s2 > 0 else 0
-            st.metric("S2 juuri nyt", f"{viimeisin_s2:.0f} ajon/h",
-                      f"{p:+.1f}% vs baseline")
+    if data_24h:
+        viimeisin = data_24h[-1]
+        metrics = []
+        if nayta_yht:
+            bl = yht_bl[-1] if yht_bl else 1
+            p = (viimeisin["yht"] - bl) / bl * 100 if bl > 0 else 0
+            metrics.append(("Yhteensä juuri nyt", f"{viimeisin['yht']:.0f} ajon/h", f"{p:+.1f}% vs baseline"))
+        if nayta_s1:
+            bl = s1_bl[-1] if s1_bl else 1
+            p = (viimeisin["s1"] - bl) / bl * 100 if bl > 0 else 0
+            metrics.append(("S1 juuri nyt", f"{viimeisin['s1']:.0f} ajon/h", f"{p:+.1f}% vs baseline"))
+        if nayta_s2:
+            bl = s2_bl[-1] if s2_bl else 1
+            p = (viimeisin["s2"] - bl) / bl * 100 if bl > 0 else 0
+            metrics.append(("S2 juuri nyt", f"{viimeisin['s2']:.0f} ajon/h", f"{p:+.1f}% vs baseline"))
+        if metrics:
+            for col, (label, val, delta) in zip(st.columns(len(metrics)), metrics):
+                with col:
+                    st.metric(label, val, delta)
 
 
 
