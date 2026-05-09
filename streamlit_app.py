@@ -41,58 +41,6 @@ st.set_page_config(
 # SALASANASUOJAUS
 # ─────────────────────────────────────────────────────────────────
 
-def tarkista_salasana():
-    """
-    Salasanasuojaus joka toimii Streamlit Cloudissa.
-    Nayttaa VAIN kirjautumissivun ennen kirjautumista
-    kayttamalla st.stop() ja erillista sivurakennetta.
-    """
-    if "kirjautunut" not in st.session_state:
-        st.session_state.kirjautunut = False
-
-    if not st.session_state.kirjautunut:
-        # Nayta kirjautumissivu - ei mitaan muuta
-        st.markdown("""
-        <style>
-        /* Piilota sivupalkki ja header kirjautumissivulla */
-        [data-testid="stSidebar"] {visibility: hidden; width: 0px !important;}
-        [data-testid="stSidebarNav"] {display: none !important;}
-        section.main > div {padding-top: 0rem;}
-        </style>
-        """, unsafe_allow_html=True)
-
-        # Tyhjaa sivu - kirjautumislomake keskella
-        st.markdown("<br>" * 5, unsafe_allow_html=True)
-        col1, col2, col3 = st.columns([1.5, 2, 1.5])
-        with col2:
-            st.markdown("""
-            <div style='
-                background: #1a1a2e;
-                border: 1px solid #3a3a5c;
-                border-radius: 12px;
-                padding: 2rem;
-                text-align: center;
-            '>
-            <h2 style='color:#e0e0ff;margin-bottom:0.5rem'>🚦 LAM-liikenneseuranta</h2>
-            <p style='color:#888;margin-bottom:1.5rem'>Kirjaudu sisään jatkaaksesi</p>
-            </div>
-            """, unsafe_allow_html=True)
-            salasana = st.text_input(
-                "Salasana", type="password", key="pw_input",
-                label_visibility="collapsed",
-                placeholder="Salasana"
-            )
-            if st.button("Kirjaudu →", use_container_width=True, type="primary"):
-                oikea = st.secrets.get("PASSWORD", "demo2026")
-                if salasana == oikea:
-                    st.session_state.kirjautunut = True
-                    st.rerun()
-                else:
-                    st.error("Väärä salasana")
-        # KRIITTINEN: st.stop() estaa kaiken muun renderoimisen
-        st.stop()
-    return True
-
 # ─────────────────────────────────────────────────────────────────
 # ASETUKSET
 # ─────────────────────────────────────────────────────────────────
@@ -861,10 +809,6 @@ def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
 
 
 def main():
-    # Tarkista kirjautuminen ENSIMMAISENA ennen muuta renderointia
-    # tarkista_salasana() kutsuu st.stop() jos ei kirjautunut
-    tarkista_salasana()
-
     # CSS
     st.markdown("""
     <style>
@@ -930,10 +874,6 @@ def main():
         - 🟢 Normaali: ±{RAJA_LIEVA}%
         - 🔵 Lasku: >{RAJA_LIEVA}%
         """)
-        st.markdown("---")
-        if st.button("🚪 Kirjaudu ulos", use_container_width=True):
-            st.session_state.kirjautunut = False
-            st.rerun()
 
     st_autorefresh(interval=paivitys_min * 60 * 1000, key="autorefresh")
 
