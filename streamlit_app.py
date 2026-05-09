@@ -21,9 +21,9 @@ import csv
 import io
 import math
 import threading
-import time
 import urllib.request
 import urllib.error
+from streamlit_autorefresh import st_autorefresh
 from datetime import datetime, timezone, timedelta, date
 
 # ─────────────────────────────────────────────────────────────────
@@ -156,6 +156,49 @@ def hae_json(url, timeout=30):
         return json.loads(raw.decode("utf-8"))
     except Exception:
         return None
+
+# ─────────────────────────────────────────────────────────────────
+# SUPABASE
+# ─────────────────────────────────────────────────────────────────
+
+def sb_request(method, path, body=None):
+    url = st.secrets["SUPABASE_URL"].rstrip("/") + "/rest/v1/" + path
+    key = st.secrets["SUPABASE_KEY"]
+    headers = {
+        "apikey":        key,
+        "Authorization": "Bearer " + key,
+        "Content-Type":  "application/json",
+        "Prefer":        "resolution=merge-duplicates",
+    }
+    data = json.dumps(body).encode("utf-8") if body else None
+    req  = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read()
+            return json.loads(raw) if raw else []
+    except Exception:
+        return None
+
+def hae_tanaan_supabasesta(sid, nyt_fin):
+    pvm_str = nyt_fin.date().isoformat()
+    path    = f"tuntidata?sid=eq.{sid}&pvm=eq.{pvm_str}&order=tunti.asc"
+    rivit   = sb_request("GET", path)
+    if not rivit:
+        return []
+    pvm = nyt_fin.date()
+    tulokset = []
+    for r in rivit:
+        t    = int(r["tunti"])
+        aika = datetime(pvm.year, pvm.month, pvm.day, t, 0, 0, tzinfo=timezone.utc)
+        tulokset.append({
+            "pvm":   pvm,
+            "tunti": t,
+            "aika":  aika,
+            "s1":    float(r["s1"]),
+            "s2":    float(r["s2"]),
+            "yht":   float(r["s1"]) + float(r["s2"]),
+        })
+    return tulokset
 
 # ─────────────────────────────────────────────────────────────────
 # PYHÄPÄIVÄT
@@ -647,31 +690,6 @@ def hae_24h_baseline(tms_num, nyt_fin):
     return baseline_per_tunti
 
 
-def tallenna_tuntisnapshootti(asemat, rtdata, nyt_fin):
-    """Tallentaa nykyisen tunnin reaaliaikalukemat session-muistiin aikajanaa varten."""
-    if "tuntidata" not in st.session_state:
-        st.session_state["tuntidata"] = {}
-    raja = nyt_fin - timedelta(hours=25)
-    tunti_key = (nyt_fin.date(), nyt_fin.hour)
-    # Siivoa yli 25h vanhat merkinnät
-    for sid in list(st.session_state["tuntidata"]):
-        st.session_state["tuntidata"][sid] = {
-            k: v for k, v in st.session_state["tuntidata"][sid].items()
-            if datetime(k[0].year, k[0].month, k[0].day, k[1]).replace(tzinfo=timezone.utc) >= raja
-        }
-    for sid, asema in asemat.items():
-        sdata = rtdata.get(sid, {})
-        s1 = sdata.get("OHITUKSET_60MIN_KIINTEA_SUUNTA1")
-        s2 = sdata.get("OHITUKSET_60MIN_KIINTEA_SUUNTA2")
-        if s1 is None and s2 is None:
-            continue
-        if sid not in st.session_state["tuntidata"]:
-            st.session_state["tuntidata"][sid] = {}
-        st.session_state["tuntidata"][sid][tunti_key] = {
-            "s1": float(s1 or 0),
-            "s2": float(s2 or 0),
-        }
-
 
 def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
     """Renderöi 24h aikajana inline kartan alle."""
@@ -692,20 +710,12 @@ def nayta_aikajana(sid, nimi, tms_num, nyt_fin):
     with st.spinner("Haetaan historiadataa..."):
         csv_data = hae_24h_data(tms_num, nyt_fin)
 
-    # Täydennä tämän päivän puuttuvat tunnit session-snapshooteilla
+    # Täydennä tämän päivän puuttuvat tunnit Supabasesta
     raja = nyt_fin - timedelta(hours=24)
     csv_tunnit = {(r["pvm"], r["tunti"]) for r in csv_data}
-    snap_data = []
-    for (pvm, tunti), vals in st.session_state.get("tuntidata", {}).get(sid, {}).items():
-        aika = datetime(pvm.year, pvm.month, pvm.day, tunti, 0, 0).replace(tzinfo=timezone.utc)
-        if aika >= raja and (pvm, tunti) not in csv_tunnit:
-            snap_data.append({
-                "pvm": pvm, "tunti": tunti,
-                "s1": vals["s1"], "s2": vals["s2"],
-                "yht": vals["s1"] + vals["s2"],
-                "aika": aika,
-            })
-    data_24h = sorted(csv_data + snap_data, key=lambda x: x["aika"])
+    sb_data = hae_tanaan_supabasesta(sid, nyt_fin)
+    sb_data = [r for r in sb_data if r["aika"] >= raja and (r["pvm"], r["tunti"]) not in csv_tunnit]
+    data_24h = sorted(csv_data + sb_data, key=lambda x: x["aika"])
 
     if not data_24h:
         st.warning("Historiadataa ei saatavilla tälle asemalle.")
@@ -925,6 +935,8 @@ def main():
             st.session_state.kirjautunut = False
             st.rerun()
 
+    st_autorefresh(interval=paivitys_min * 60 * 1000, key="autorefresh")
+
     # Tarkista aikajana-pyynto URL-parametreista (popup-nappi)
     qp = st.query_params
     if "aikajana_sid" in qp:
@@ -970,8 +982,6 @@ def main():
 
     with st.spinner("Haetaan reaaliaikainen liikennedata..."):
         rtdata = hae_reaaliaikadata()
-
-    tallenna_tuntisnapshootti(asemat, rtdata, nyt_fin)
 
     with st.spinner("Haetaan suuntavakiot..."):
         kulmat = hae_suuntavakiot(tuple(sorted(asemat.keys())))
@@ -1040,9 +1050,6 @@ def main():
     # Viimeinen päivitys
     st.markdown(f"*Päivitetty: {nyt_fin.strftime('%d.%m.%Y %H:%M')} (Suomen aika)*")
 
-    # Automaattinen päivitys
-    time.sleep(paivitys_min * 60)
-    st.rerun()
 
 
 if __name__ == "__main__":

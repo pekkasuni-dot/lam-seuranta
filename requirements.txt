@@ -2,3 +2,4 @@ streamlit>=1.40.0
 folium>=0.16.0
 streamlit-folium>=0.20.0
 plotly>=5.18.0
+streamlit-autorefresh>=0.0.1
