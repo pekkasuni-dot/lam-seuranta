@@ -1,8 +1,11 @@
+import csv
 import gzip
+import io
 import json
 import os
 import urllib.request
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
+from zoneinfo import ZoneInfo
 
 BASE_URL  = "https://tie.digitraffic.fi"
 ALUE_BBOX = (23.5, 63.7, 29.5, 70.1)
@@ -92,8 +95,87 @@ def sb_upsert(rows):
     print(f"OK: {len(rows)} riviä tallennettu")
 
 
+def csv_aggregoi_paiva(tms_num, pvm):
+    """Lataa päivän CSV ja palauttaa {tunti: (s1, s2)}."""
+    yy  = str(pvm.year)[-2:].lstrip("0") or "0"
+    doy = pvm.timetuple().tm_yday
+    url = f"{BASE_URL}/api/tms/v1/history/raw/lamraw_{tms_num}_{yy}_{doy}.csv"
+    raw = hae_bytes(url)
+    if raw is None:
+        return {}
+    laskuri = {t: {"s1": 0, "s2": 0} for t in range(24)}
+    try:
+        for rivi in csv.reader(
+                io.StringIO(raw.decode("utf-8", errors="replace")), delimiter=";"):
+            if len(rivi) < 13:
+                continue
+            try:
+                t  = int(rivi[3])
+                su = int(rivi[9])
+                f  = int(rivi[12])
+                if f != 0 or t not in laskuri:
+                    continue
+                if su == 1:   laskuri[t]["s1"] += 1
+                elif su == 2: laskuri[t]["s2"] += 1
+            except ValueError:
+                continue
+    except Exception:
+        return {}
+    return {t: (float(v["s1"]) if v["s1"] > 0 else None,
+                float(v["s2"]) if v["s2"] > 0 else None)
+            for t, v in laskuri.items()}
+
+
+def tallenna_eilinen(asemat):
+    """Aggregoi eilisen CSV-data Supabaseen. Ajetaan klo 01 Suomen aikaa."""
+    eilen   = (datetime.now(ZoneInfo("Europe/Helsinki")) - timedelta(days=1)).date()
+    pvm_str = eilen.isoformat()
+
+    # Tarkista onko jo tallennettu
+    key = os.environ["SUPABASE_KEY"]
+    tarkistus_url = (os.environ["SUPABASE_URL"].rstrip("/") +
+                     f"/rest/v1/tuntidata?pvm=eq.{pvm_str}&select=sid&limit=1")
+    tark_req = urllib.request.Request(tarkistus_url, headers={
+        "apikey": key, "Authorization": f"Bearer {key}",
+    })
+    try:
+        with urllib.request.urlopen(tark_req, timeout=10) as resp:
+            if json.loads(resp.read()):
+                print(f"Eilinen {pvm_str} on jo tallennettu, ohitetaan.")
+                return
+    except Exception as e:
+        print(f"Tarkistusvirhe: {e}")
+        return
+
+    print(f"Tallennetaan eilinen {pvm_str}...")
+    rivit = []
+    for sid, asema in asemat.items():
+        if asema["tila"] == "REMOVED_TEMPORARILY" or not asema["tmsNum"]:
+            continue
+        tunnit = csv_aggregoi_paiva(asema["tmsNum"], eilen)
+        for tunti, (s1, s2) in tunnit.items():
+            if s1 is None and s2 is None:
+                continue
+            rivit.append({
+                "sid":     sid,
+                "tms_num": asema["tmsNum"],
+                "pvm":     pvm_str,
+                "tunti":   tunti,
+                "s1":      s1 or 0.0,
+                "s2":      s2 or 0.0,
+            })
+
+    if not rivit:
+        print("Ei eilistä dataa tallennettavaksi.")
+        return
+
+    for i in range(0, len(rivit), 500):
+        sb_upsert(rivit[i:i+500])
+    print(f"Eilinen tallennettu: {len(rivit)} riviä.")
+
+
 def main():
-    nyt_fin = datetime.now(timezone.utc) + timedelta(hours=3)
+    nyt_fin = datetime.now(ZoneInfo("Europe/Helsinki")).replace(tzinfo=timezone.utc)
     pvm_str = nyt_fin.date().isoformat()
     tunti   = nyt_fin.hour
     print(f"Kerätään {pvm_str} klo {tunti:02d}...")
@@ -130,6 +212,10 @@ def main():
         sb_upsert(rivit)
     else:
         print("Ei tallennettavaa dataa")
+
+    # Klo 01 Suomen aikaa: tallenna eilinen CSV-data Supabaseen
+    if tunti == 1:
+        tallenna_eilinen(asemat)
 
 
 if __name__ == "__main__":

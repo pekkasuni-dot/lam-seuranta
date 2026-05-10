@@ -19,6 +19,7 @@ import math
 import threading
 import urllib.request
 from datetime import datetime, timezone, timedelta, date
+from zoneinfo import ZoneInfo
 from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(
@@ -99,6 +100,22 @@ def hae_tanaan_supabasesta(sid, nyt_fin):
             "yht":   float(r["s1"]) + float(r["s2"]),
         })
     return tulokset
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def hae_paiva_supabasesta(sid, pvm_str):
+    path  = f"tuntidata?sid=eq.{sid}&pvm=eq.{pvm_str}&order=tunti.asc"
+    rivit = sb_request("GET", path)
+    if not rivit:
+        return []
+    pvm = date.fromisoformat(pvm_str)
+    return [{
+        "tunti": int(r["tunti"]),
+        "aika":  datetime(pvm.year, pvm.month, pvm.day,
+                          int(r["tunti"]), 0, 0, tzinfo=timezone.utc),
+        "s1":    float(r["s1"]),
+        "s2":    float(r["s2"]),
+        "yht":   float(r["s1"]) + float(r["s2"]),
+    } for r in rivit]
 
 # ─────────────────────────────────────────────────────────────────
 # VERKKO
@@ -365,15 +382,51 @@ def hae_eilen_csv(tms_num, eilen_str):
         })
     return sorted(tulokset, key=lambda x: x["aika"])
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def csv_hae_kaikki_tunnit(tms_num, pvm_str):
+    """Lataa CSV kerran ja palauttaa {tunti: (s1, s2)} kaikille 24 tunnille."""
+    if tms_num is None:
+        return {}
+    pvm = date.fromisoformat(pvm_str)
+    yy  = str(pvm.year)[-2:].lstrip("0") or "0"
+    doy = pvm.timetuple().tm_yday
+    url = f"{BASE_URL}/api/tms/v1/history/raw/lamraw_{tms_num}_{yy}_{doy}.csv"
+    raw = hae_bytes(url, timeout=20)
+    if raw is None:
+        return {}
+    laskuri = {t: {"s1": 0, "s2": 0} for t in range(24)}
+    try:
+        for rivi in csv.reader(
+                io.StringIO(raw.decode("utf-8", errors="replace")), delimiter=";"):
+            if len(rivi) < 13:
+                continue
+            try:
+                t  = int(rivi[3])
+                su = int(rivi[9])
+                f  = int(rivi[12])
+                if f != 0 or t not in laskuri:
+                    continue
+                if su == 1:   laskuri[t]["s1"] += 1
+                elif su == 2: laskuri[t]["s2"] += 1
+            except ValueError:
+                continue
+    except Exception:
+        return {}
+    return {t: (float(v["s1"]) if v["s1"] > 0 else None,
+                float(v["s2"]) if v["s2"] > 0 else None)
+            for t, v in laskuri.items()}
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def hae_24h_baseline(tms_num, nyt_fin_str):
-    nyt_fin = datetime.fromisoformat(nyt_fin_str)
+    nyt_fin   = datetime.fromisoformat(nyt_fin_str)
+    normaalit, _ = etsi_normaalit_paivat(nyt_fin, maara=4, max_viikkoja=16)
+    paivien_data = {pvm: csv_hae_kaikki_tunnit(tms_num, pvm.isoformat())
+                    for pvm in normaalit}
     bl = {}
     for tunti in range(24):
-        normaalit, _ = etsi_normaalit_paivat(nyt_fin, maara=4, max_viikkoja=16)
         s1v, s2v = [], []
-        for pvm in normaalit:
-            s1, s2 = csv_hae_tunti(tms_num, pvm, tunti)
+        for tunnit in paivien_data.values():
+            s1, s2 = tunnit.get(tunti, (None, None))
             if s1 is not None: s1v.append(s1)
             if s2 is not None: s2v.append(s2)
         bl[tunti] = {
@@ -387,19 +440,19 @@ def hae_24h_baseline(tms_num, nyt_fin_str):
 # ─────────────────────────────────────────────────────────────────
 
 def laske_liikennedata(sdata):
-    s1 = s2 = 0.0
+    v60_s1 = sdata.get("OHITUKSET_60MIN_KIINTEA_SUUNTA1")
+    v60_s2 = sdata.get("OHITUKSET_60MIN_KIINTEA_SUUNTA2")
+    if v60_s1 is None and v60_s2 is None:
+        return None, None, None, 0.0
+    s1 = float(v60_s1) if v60_s1 is not None else 0.0
+    s2 = float(v60_s2) if v60_s2 is not None else 0.0
     nopeudet = []
     for suunta in ["SUUNTA1", "SUUNTA2"]:
-        v60 = sdata.get(f"OHITUKSET_60MIN_KIINTEA_{suunta}")
-        v5  = sdata.get(f"OHITUKSET_5MIN_LIUKUVA_{suunta}")
-        val = float(v60) if v60 is not None else (
-              float(v5)*12 if v5 is not None else 0.0)
-        if suunta == "SUUNTA1": s1 = val
-        else: s2 = val
         nop = sdata.get(f"KESKINOPEUS_60MIN_KIINTEA_{suunta}")
-        if nop and nop > 0: nopeudet.append(float(nop))
-    nopeus = sum(nopeudet)/len(nopeudet) if nopeudet else 0.0
-    return s1+s2, s1, s2, nopeus
+        if nop and nop > 0:
+            nopeudet.append(float(nop))
+    nopeus = sum(nopeudet) / len(nopeudet) if nopeudet else 0.0
+    return s1 + s2, s1, s2, nopeus
 
 def pct(nykyinen, baseline):
     if baseline and baseline > 0:
@@ -434,7 +487,9 @@ def nayta_aikajana_modal(sid, nimi, tms_num, nyt_fin):
     eilen       = (nyt_fin - timedelta(days=1)).date()
 
     with st.spinner("Haetaan historiadataa..."):
-        eilen_data  = hae_eilen_csv(tms_num, eilen.isoformat())
+        eilen_data = hae_paiva_supabasesta(sid, eilen.isoformat())
+        if not eilen_data:
+            eilen_data = hae_eilen_csv(tms_num, eilen.isoformat())
         tanaan_data = hae_tanaan_supabasesta(sid, nyt_fin)
 
     raja    = nyt_fin - timedelta(hours=24)
@@ -601,10 +656,11 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat, kelikamerat=None):
         lon, lat  = asema["lon"], asema["lat"]
         kulma_tie = kulmat.get(sid, 0.0)
 
-        if not bl["ok"]:
+        if yht is None or not bl["ok"]:
             luokka = "EI_DATAA"
             p_yht = p_s1 = p_s2 = 0.0
             bl_yht = bl_s1 = bl_s2 = 0.0
+            yht = s1 = s2 = 0.0
         else:
             p_yht  = pct(yht, bl["yht"])
             p_s1   = pct(s1,  bl["s1"])
@@ -766,8 +822,7 @@ def main():
 
     st_autorefresh(interval=paivitys_min * 60 * 1000, key="autorefresh")
 
-    nyt_utc = datetime.now(timezone.utc)
-    nyt_fin = nyt_utc + timedelta(hours=3)
+    nyt_fin = datetime.now(ZoneInfo("Europe/Helsinki")).replace(tzinfo=timezone.utc)
     tunti   = nyt_fin.hour
 
     normaalit_pvmt, ohitetut = etsi_normaalit_paivat(nyt_fin, maara=4, max_viikkoja=16)
