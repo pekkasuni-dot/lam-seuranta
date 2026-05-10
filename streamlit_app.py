@@ -487,9 +487,14 @@ def nayta_aikajana_modal(sid, nimi, tms_num, nyt_fin):
     eilen       = (nyt_fin - timedelta(days=1)).date()
 
     with st.spinner("Haetaan historiadataa..."):
-        eilen_data = hae_paiva_supabasesta(sid, eilen.isoformat())
-        if not eilen_data:
-            eilen_data = hae_eilen_csv(tms_num, eilen.isoformat())
+        sb_eilen  = hae_paiva_supabasesta(sid, eilen.isoformat())
+        csv_eilen = hae_eilen_csv(tms_num, eilen.isoformat())
+        # Yhdistä: Supabase-data ensisijainen, CSV täydentää puuttuvat tunnit
+        sb_tunnit = {r["tunti"] for r in sb_eilen}
+        eilen_data = sorted(
+            sb_eilen + [r for r in csv_eilen if r["tunti"] not in sb_tunnit],
+            key=lambda x: x["aika"],
+        )
         tanaan_data = hae_tanaan_supabasesta(sid, nyt_fin)
 
     raja    = nyt_fin - timedelta(hours=24)
@@ -502,13 +507,13 @@ def nayta_aikajana_modal(sid, nimi, tms_num, nyt_fin):
 
     if not data:
         st.warning("Historiadataa ei saatavilla.")
-        st.caption(f"Eilen CSV: {len(eilen_data)} tuntia · Tänään Supabase: {len(tanaan_data)} tuntia")
+        st.caption(f"Eilen Supabase: {len(sb_eilen)} tuntia · CSV: {len(csv_eilen)} tuntia · Tänään: {len(tanaan_data)} tuntia")
         st.caption("Tänään kerätty data ilmestyy tänne kun GitHub Actions on ajanut vähintään kerran.")
         return
 
     tanaan_tunnit = len(tanaan_data)
     eilen_tunnit  = len([r for r in eilen_data if r["aika"] >= raja])
-    st.caption(f"Eilen (CSV): {eilen_tunnit} tuntia · Tänään (reaaliaikainen): {tanaan_tunnit} tuntia")
+    st.caption(f"Eilen: {eilen_tunnit} tuntia (SB:{len(sb_eilen)}+CSV:{len(csv_eilen)}) · Tänään: {tanaan_tunnit} tuntia")
 
     ajat    = [r["aika"] for r in data]
     s1_nyt  = [r["s1"]  for r in data]
