@@ -213,8 +213,9 @@ def main():
     else:
         print("Ei tallennettavaa dataa")
 
-    # Klo 01 Suomen aikaa: tallenna eilinen CSV-data Supabaseen
-    if tunti == 1:
+    # Klo 09 Suomen aikaa: tallenna eilinen CSV-data Supabaseen
+    # (raakadata saatavilla tyypillisesti klo 08-09)
+    if tunti == 9:
         tallenna_eilinen(asemat)
 
 
