@@ -483,7 +483,7 @@ def nayta_aikajana_modal(sid, nimi, tms_num, nyt_fin):
     if "_Flex" in nimi:
         st.warning("⚠️ Tämä on Flex-versio asemasta. Data saattaa olla puutteellista.")
 
-    nyt_fin_str = nyt_fin.isoformat()
+    nyt_fin_str = nyt_fin.replace(minute=0, second=0, microsecond=0).isoformat()
     eilen       = (nyt_fin - timedelta(days=1)).date()
 
     with st.spinner("Haetaan historiadataa..."):
