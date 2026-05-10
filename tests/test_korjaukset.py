@@ -235,10 +235,11 @@ def test_csv_aggregoi_paiva_olemassa():
     )
 
 
-def test_tallenna_eilinen_ajetaan_tunnilla_1():
-    """main() kutsuu tallenna_eilinen vain kun tunti == 1."""
+def test_tallenna_eilinen_ajetaan_tunnilla_9():
+    """main() kutsuu tallenna_eilinen klo 09 (CSV saatavilla vasta klo 08-09)."""
     src = open(os.path.join(ROOT, "scripts", "keraa_lam.py"), encoding="utf-8").read()
-    assert "tunti == 1" in src, "Ei löydy 'tunti == 1' tarkistusta main():ssa!"
+    assert "tunti == 9" in src, "Ei löydy 'tunti == 9' tarkistusta main():ssa! (CSV saatavilla vasta klo 08-09)"
+    assert "tunti == 1" not in src, "Vanha 'tunti == 1' on edelleen koodissa!"
     assert "tallenna_eilinen" in src, "tallenna_eilinen ei esiinny main():ssa!"
 
 
