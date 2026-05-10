@@ -176,9 +176,11 @@ def tallenna_eilinen(asemat):
 
 def main():
     nyt_fin = datetime.now(ZoneInfo("Europe/Helsinki")).replace(tzinfo=timezone.utc)
-    pvm_str = nyt_fin.date().isoformat()
-    tunti   = nyt_fin.hour
-    print(f"Kerätään {pvm_str} klo {tunti:02d}...")
+    # OHITUKSET_60MIN_KIINTEA edustaa juuri päättynyttä tuntia (esim. klo 17 → tunti 16)
+    kohde   = nyt_fin - timedelta(hours=1)
+    pvm_str = kohde.date().isoformat()
+    tunti   = kohde.hour
+    print(f"Kerätään {pvm_str} klo {tunti:02d} (ajo klo {nyt_fin.hour:02d})...")
 
     asemat = hae_asemat()
     if not asemat:

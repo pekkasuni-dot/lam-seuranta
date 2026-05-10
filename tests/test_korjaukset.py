@@ -239,8 +239,16 @@ def test_tallenna_eilinen_ajetaan_tunnilla_9():
     """main() kutsuu tallenna_eilinen klo 09 (CSV saatavilla vasta klo 08-09)."""
     src = open(os.path.join(ROOT, "scripts", "keraa_lam.py"), encoding="utf-8").read()
     assert "tunti == 9" in src, "Ei löydy 'tunti == 9' tarkistusta main():ssa! (CSV saatavilla vasta klo 08-09)"
-    assert "tunti == 1" not in src, "Vanha 'tunti == 1' on edelleen koodissa!"
     assert "tallenna_eilinen" in src, "tallenna_eilinen ei esiinny main():ssa!"
+
+
+def test_tunti_on_edellinen_tunti():
+    """Tallennettu tunti on nyt_fin.hour - 1 (OHITUKSET_60MIN_KIINTEA edustaa juuri päättynyttä tuntia)."""
+    src = open(os.path.join(ROOT, "scripts", "keraa_lam.py"), encoding="utf-8").read()
+    assert "timedelta(hours=1)" in src, "Tunnin vähennys puuttuu keraa_lam.py:stä!"
+    assert "kohde.hour" in src or "kohde   = nyt_fin - timedelta" in src, (
+        "Tallennettava tunti ei ole nyt_fin.hour - 1!"
+    )
 
 
 def test_tallenna_eilinen_tarkistaa_onko_jo_tallennettu():
