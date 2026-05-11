@@ -243,6 +243,7 @@ def hae_asemat():
     if not data:
         return {}
     asemat = {}
+    xmin, ymin, xmax, _ = ALUE_BBOX
     for f in data.get("features", []):
         props  = f.get("properties", {})
         sid    = props.get("id")
@@ -250,14 +251,15 @@ def hae_asemat():
         coords = f.get("geometry", {}).get("coordinates", [None, None])
         if sid and coords[0] and coords[1]:
             lon, lat = float(coords[0]), float(coords[1])
-            asemat[sid] = {
-                "id": sid, "tmsNum": tnum,
-                "nimi": props.get("name", f"Asema {sid}"),
-                "tie": props.get("roadNumber"),
-                "lon": lon, "lat": lat,
-                "kunta": props.get("municipality", ""),
-                "tila": props.get("collectionStatus", ""),
-            }
+            if xmin <= lon <= xmax and lat >= ymin:
+                asemat[sid] = {
+                    "id": sid, "tmsNum": tnum,
+                    "nimi": props.get("name", f"Asema {sid}"),
+                    "tie": props.get("roadNumber"),
+                    "lon": lon, "lat": lat,
+                    "kunta": props.get("municipality", ""),
+                    "tila": props.get("collectionStatus", ""),
+                }
     return asemat
 
 @st.cache_data(ttl=3600)
@@ -707,12 +709,15 @@ def hae_kelikamerat():
     if not data:
         return []
     kamerat = []
+    xmin, ymin, xmax, ymax = ALUE_BBOX
     for f in data.get("features", []):
         props  = f.get("properties", {})
         coords = f.get("geometry", {}).get("coordinates", [None, None])
         if not coords[0] or not coords[1]:
             continue
         lon, lat = float(coords[0]), float(coords[1])
+        if not (xmin <= lon <= xmax and ymin <= lat <= ymax):
+            continue
         img_url = None
         for preset in props.get("presets", []):
             preset_id = preset.get("id")
@@ -735,7 +740,7 @@ def hae_kelikamerat():
 
 def luo_kartta(asemat, rtdata, baselineet, kulmat, kelikamerat=None):
     kartta = folium.Map(
-        location=[64.5, 26.0], zoom_start=5,
+        location=[65.5, 26.0], zoom_start=6,
         tiles="CartoDB dark_matter", control_scale=True,
     )
     kartta.get_root().html.add_child(folium.Element(
