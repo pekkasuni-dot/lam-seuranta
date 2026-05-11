@@ -775,6 +775,7 @@ def main():
     .block-container { padding-top:1rem !important; padding-bottom:0.5rem !important; }
     .stSidebar { background: #1a1a2e; }
     h1, h2, h3 { color: #e0e0ff; }
+    header[data-testid="stHeader"] { display: none !important; }
     </style>""", unsafe_allow_html=True)
 
     with st.sidebar:
