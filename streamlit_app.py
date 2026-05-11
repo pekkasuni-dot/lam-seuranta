@@ -784,7 +784,6 @@ def main():
     button[aria-label="Expand sidebar"] { display: none !important; }
     button[kind="header"] { display: none !important; }
     button[kind="headerNoPadding"] { display: none !important; }
-    section[data-testid="stSidebar"] > div:has(> div > button) { display: none !important; }
     </style>""", unsafe_allow_html=True)
 
     with st.sidebar:
