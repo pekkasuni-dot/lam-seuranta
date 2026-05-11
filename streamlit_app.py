@@ -117,6 +117,26 @@ def hae_paiva_supabasesta(sid, pvm_str):
         "yht":   float(r["s1"]) + float(r["s2"]),
     } for r in rivit]
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def hae_jakso_supabasesta(sid, alku_str, loppu_str):
+    path  = (f"tuntidata?sid=eq.{sid}&pvm=gte.{alku_str}&pvm=lte.{loppu_str}"
+             f"&order=pvm.asc,tunti.asc&limit=2000")
+    rivit = sb_request("GET", path)
+    if not rivit:
+        return []
+    tulokset = []
+    for r in rivit:
+        pvm = date.fromisoformat(r["pvm"])
+        tulokset.append({
+            "tunti": int(r["tunti"]),
+            "aika":  datetime(pvm.year, pvm.month, pvm.day,
+                              int(r["tunti"]), 0, 0, tzinfo=timezone.utc),
+            "s1":    float(r["s1"]),
+            "s2":    float(r["s2"]),
+            "yht":   float(r["s1"]) + float(r["s2"]),
+        })
+    return tulokset
+
 # ─────────────────────────────────────────────────────────────────
 # VERKKO
 # ─────────────────────────────────────────────────────────────────
@@ -479,112 +499,143 @@ def kulma_siirto(lon, lat, kulma_asteet, pituus):
 @st.dialog(" ", width="large")
 def nayta_aikajana_modal(sid, nimi, tms_num, nyt_fin):
     st.markdown(f"### {nimi}")
-    st.markdown("*Viimeiset 24 tuntia*")
     if "_Flex" in nimi:
         st.warning("⚠️ Tämä on Flex-versio asemasta. Data saattaa olla puutteellista.")
 
     nyt_fin_str = nyt_fin.replace(minute=0, second=0, microsecond=0).isoformat()
     eilen       = (nyt_fin - timedelta(days=1)).date()
+    alku_4w     = (nyt_fin - timedelta(weeks=4)).date()
 
-    with st.spinner("Haetaan historiadataa..."):
-        sb_eilen  = hae_paiva_supabasesta(sid, eilen.isoformat())
-        csv_eilen = hae_eilen_csv(tms_num, eilen.isoformat())
-        # Yhdistä: Supabase-data ensisijainen, CSV täydentää puuttuvat tunnit
-        sb_tunnit = {r["tunti"] for r in sb_eilen}
-        eilen_data = sorted(
-            sb_eilen + [r for r in csv_eilen if r["tunti"] not in sb_tunnit],
-            key=lambda x: x["aika"],
-        )
+    with st.spinner("Haetaan data..."):
+        baseline    = hae_24h_baseline(tms_num, nyt_fin_str)
         tanaan_data = hae_tanaan_supabasesta(sid, nyt_fin)
+        sb_eilen    = hae_paiva_supabasesta(sid, eilen.isoformat())
+        csv_eilen   = hae_eilen_csv(tms_num, eilen.isoformat())
+        jakso_data  = hae_jakso_supabasesta(sid, alku_4w.isoformat(), eilen.isoformat())
 
-    raja    = nyt_fin - timedelta(hours=24)
-    kaikki  = [{**r, "lahde": "Historia"}   for r in eilen_data  if r["aika"] >= raja]
-    kaikki += [{**r, "lahde": "Reaaliaikainen"} for r in tanaan_data if r["aika"] >= raja]
-    data    = sorted(kaikki, key=lambda x: x["aika"])
-
-    with st.spinner("Lasketaan vertailuarvo..."):
-        baseline = hae_24h_baseline(tms_num, nyt_fin_str)
-
-    if not data:
-        st.warning("Historiadataa ei saatavilla.")
-        st.caption(f"Eilen Supabase: {len(sb_eilen)} tuntia · CSV: {len(csv_eilen)} tuntia · Tänään: {len(tanaan_data)} tuntia")
-        st.caption("Tänään kerätty data ilmestyy tänne kun GitHub Actions on ajanut vähintään kerran.")
-        return
-
-    tanaan_tunnit = len(tanaan_data)
-    eilen_tunnit  = len([r for r in eilen_data if r["aika"] >= raja])
-    st.caption(f"Eilen: {eilen_tunnit} tuntia (SB:{len(sb_eilen)}+CSV:{len(csv_eilen)}) · Tänään: {tanaan_tunnit} tuntia")
-
-    ajat    = [r["aika"] for r in data]
-    s1_nyt  = [r["s1"]  for r in data]
-    s2_nyt  = [r["s2"]  for r in data]
-    yht_nyt = [r["yht"] for r in data]
-
-    raja_aika = nyt_fin - timedelta(hours=24)
-    bl_alku   = datetime(raja_aika.year, raja_aika.month, raja_aika.day,
-                         raja_aika.hour, tzinfo=timezone.utc)
-    bl_loppu  = datetime(nyt_fin.year, nyt_fin.month, nyt_fin.day,
-                         nyt_fin.hour, tzinfo=timezone.utc)
-    bl_ajat, bl_s1, bl_s2, bl_yht = [], [], [], []
-    t = bl_alku
-    while t <= bl_loppu:
-        b = baseline.get(t.hour, {"s1": 0, "s2": 0})
-        bl_ajat.append(t)
-        bl_s1.append(b["s1"])
-        bl_s2.append(b["s2"])
-        bl_yht.append(b["s1"] + b["s2"])
-        t += timedelta(hours=1)
-
-    fig = go.Figure()
-
-    fig.add_trace(go.Scatter(x=bl_ajat, y=bl_yht, name="Yht. vertailu",
-        line=dict(color="#888", dash="dash", width=1.5), mode="lines"))
-    fig.add_trace(go.Scatter(x=bl_ajat, y=bl_s1, name="S1 vertailu",
-        line=dict(color="#5a8fd0", dash="dash", width=1.5), mode="lines"))
-    fig.add_trace(go.Scatter(x=bl_ajat, y=bl_s2, name="S2 vertailu",
-        line=dict(color="#28904a", dash="dash", width=1.5), mode="lines"))
-    lahde_lista = [r["lahde"] for r in data]
-
-    fig.add_trace(go.Scatter(x=ajat, y=yht_nyt, name="Yhteensä",
-        line=dict(color="#FF8C00", width=2.5), mode="lines+markers",
-        marker=dict(size=5),
-        customdata=lahde_lista,
-        hovertemplate="Yhteensä: %{y:.0f} · %{customdata}<extra></extra>"))
-    fig.add_trace(go.Scatter(x=ajat, y=s1_nyt, name="S1",
-        line=dict(color="#2E6FBF", width=2.5), mode="lines+markers",
-        marker=dict(size=5),
-        hovertemplate="S1: %{y:.0f}<extra></extra>"))
-    fig.add_trace(go.Scatter(x=ajat, y=s2_nyt, name="S2",
-        line=dict(color="#2D9E47", width=2.5), mode="lines+markers",
-        marker=dict(size=5),
-        hovertemplate="S2: %{y:.0f}<extra></extra>"))
-
-    fig.update_layout(
-        paper_bgcolor="#0f0f1a", plot_bgcolor="#1a1a2e",
-        font=dict(color="#e0e0ff"),
-        xaxis=dict(title="Aika", gridcolor="#2a2a4a", tickformat="%H:%M %d.%m."),
-        yaxis=dict(title="Ohituksia / tunti", gridcolor="#2a2a4a"),
-        legend=dict(bgcolor="#1a1a2e", bordercolor="#3a3a5c", borderwidth=1),
-        hovermode="x unified", height=420,
-        margin=dict(l=60, r=20, t=20, b=60),
+    sb_tunnit  = {r["tunti"] for r in sb_eilen}
+    eilen_data = sorted(
+        sb_eilen + [r for r in csv_eilen if r["tunti"] not in sb_tunnit],
+        key=lambda x: x["aika"],
     )
-    st.plotly_chart(fig, use_container_width=True)
 
-    if data:
-        viimeisin = data[-1]
-        bl_t = baseline.get(viimeisin["tunti"], {"s1": 0, "s2": 0})
-        metrics = []
-        bl = bl_t["s1"] + bl_t["s2"]
-        p  = (viimeisin["yht"] - bl) / bl * 100 if bl > 0 else 0
-        metrics.append(("Yhteensä nyt", f"{viimeisin['yht']:.0f} ajon/h", f"{p:+.1f}%"))
-        bl = bl_t["s1"]
-        p  = (viimeisin["s1"] - bl) / bl * 100 if bl > 0 else 0
-        metrics.append(("S1 nyt", f"{viimeisin['s1']:.0f} ajon/h", f"{p:+.1f}%"))
-        bl = bl_t["s2"]
-        p  = (viimeisin["s2"] - bl) / bl * 100 if bl > 0 else 0
-        metrics.append(("S2 nyt", f"{viimeisin['s2']:.0f} ajon/h", f"{p:+.1f}%"))
-        for col, (label, val, delta) in zip(st.columns(3), metrics):
-            col.metric(label, val, delta)
+    tab24h, tab4w = st.tabs(["📊 24 tuntia", "📅 4 viikkoa"])
+
+    # ── 24 h ──────────────────────────────────────────────────────
+    with tab24h:
+        raja   = nyt_fin - timedelta(hours=24)
+        kaikki = [{**r, "lahde": "Historia"}       for r in eilen_data  if r["aika"] >= raja]
+        kaikki+= [{**r, "lahde": "Reaaliaikainen"} for r in tanaan_data if r["aika"] >= raja]
+        data   = sorted(kaikki, key=lambda x: x["aika"])
+
+        if not data:
+            st.warning("Historiadataa ei saatavilla.")
+            st.caption(f"Eilen SB:{len(sb_eilen)} CSV:{len(csv_eilen)} · Tänään:{len(tanaan_data)}")
+            st.caption("Tänään kerätty data ilmestyy tänne kun GitHub Actions on ajanut vähintään kerran.")
+        else:
+            st.caption(
+                f"Eilen: {len([r for r in eilen_data if r['aika']>=raja])} h "
+                f"(SB:{len(sb_eilen)}+CSV:{len(csv_eilen)}) · Tänään: {len(tanaan_data)} h"
+            )
+            ajat    = [r["aika"] for r in data]
+            s1_nyt  = [r["s1"]  for r in data]
+            s2_nyt  = [r["s2"]  for r in data]
+            yht_nyt = [r["yht"] for r in data]
+
+            bl_alku  = datetime(raja.year, raja.month, raja.day, raja.hour, tzinfo=timezone.utc)
+            bl_loppu = datetime(nyt_fin.year, nyt_fin.month, nyt_fin.day, nyt_fin.hour, tzinfo=timezone.utc)
+            bl_ajat, bl_s1, bl_s2, bl_yht = [], [], [], []
+            t = bl_alku
+            while t <= bl_loppu:
+                b = baseline.get(t.hour, {"s1": 0, "s2": 0})
+                bl_ajat.append(t); bl_s1.append(b["s1"])
+                bl_s2.append(b["s2"]); bl_yht.append(b["s1"]+b["s2"])
+                t += timedelta(hours=1)
+
+            lahde_lista = [r["lahde"] for r in data]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=bl_ajat, y=bl_yht, name="Yht. vertailu",
+                line=dict(color="#888", dash="dash", width=1.5), mode="lines"))
+            fig.add_trace(go.Scatter(x=bl_ajat, y=bl_s1, name="S1 vertailu",
+                line=dict(color="#5a8fd0", dash="dash", width=1.5), mode="lines"))
+            fig.add_trace(go.Scatter(x=bl_ajat, y=bl_s2, name="S2 vertailu",
+                line=dict(color="#28904a", dash="dash", width=1.5), mode="lines"))
+            fig.add_trace(go.Scatter(x=ajat, y=yht_nyt, name="Yhteensä",
+                line=dict(color="#FF8C00", width=2.5), mode="lines+markers", marker=dict(size=5),
+                customdata=lahde_lista,
+                hovertemplate="Yhteensä: %{y:.0f} · %{customdata}<extra></extra>"))
+            fig.add_trace(go.Scatter(x=ajat, y=s1_nyt, name="S1",
+                line=dict(color="#2E6FBF", width=2.5), mode="lines+markers", marker=dict(size=5),
+                hovertemplate="S1: %{y:.0f}<extra></extra>"))
+            fig.add_trace(go.Scatter(x=ajat, y=s2_nyt, name="S2",
+                line=dict(color="#2D9E47", width=2.5), mode="lines+markers", marker=dict(size=5),
+                hovertemplate="S2: %{y:.0f}<extra></extra>"))
+            fig.update_layout(
+                paper_bgcolor="#0f0f1a", plot_bgcolor="#1a1a2e", font=dict(color="#e0e0ff"),
+                xaxis=dict(title="Aika", gridcolor="#2a2a4a", tickformat="%H:%M %d.%m."),
+                yaxis=dict(title="Ohituksia / tunti", gridcolor="#2a2a4a"),
+                legend=dict(bgcolor="#1a1a2e", bordercolor="#3a3a5c", borderwidth=1),
+                hovermode="x unified", height=420, margin=dict(l=60, r=20, t=20, b=60),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            viimeisin = data[-1]
+            bl_t = baseline.get(viimeisin["tunti"], {"s1": 0, "s2": 0})
+            metrics = []
+            for key, label in [("yht", "Yhteensä nyt"), ("s1", "S1 nyt"), ("s2", "S2 nyt")]:
+                bl = (bl_t["s1"]+bl_t["s2"]) if key == "yht" else bl_t[key]
+                p  = (viimeisin[key] - bl) / bl * 100 if bl > 0 else 0
+                metrics.append((label, f"{viimeisin[key]:.0f} ajon/h", f"{p:+.1f}%"))
+            for col, (label, val, delta) in zip(st.columns(3), metrics):
+                col.metric(label, val, delta)
+
+    # ── 4 viikkoa ─────────────────────────────────────────────────
+    with tab4w:
+        kaikki_4w  = list(jakso_data)
+        kaikki_4w += [{**r} for r in tanaan_data]
+        data_4w = sorted(kaikki_4w, key=lambda x: x["aika"])
+
+        if not data_4w:
+            st.warning("Historiadataa ei saatavilla 4 viikon näkymässä.")
+        else:
+            st.caption(f"{len(data_4w)} datapistettä · {alku_4w} – {nyt_fin.date()}")
+
+            ajat_4w = [r["aika"] for r in data_4w]
+            s1_4w   = [r["s1"]  for r in data_4w]
+            s2_4w   = [r["s2"]  for r in data_4w]
+            yht_4w  = [r["yht"] for r in data_4w]
+
+            bl_alku_4w  = datetime(alku_4w.year, alku_4w.month, alku_4w.day, 0, tzinfo=timezone.utc)
+            bl_loppu_4w = datetime(nyt_fin.year, nyt_fin.month, nyt_fin.day, nyt_fin.hour, tzinfo=timezone.utc)
+            bl_ajat_4w, bl_yht_4w = [], []
+            t = bl_alku_4w
+            while t <= bl_loppu_4w:
+                b = baseline.get(t.hour, {"s1": 0, "s2": 0})
+                bl_ajat_4w.append(t)
+                bl_yht_4w.append(b["s1"] + b["s2"])
+                t += timedelta(hours=1)
+
+            fig4w = go.Figure()
+            fig4w.add_trace(go.Scatter(x=bl_ajat_4w, y=bl_yht_4w, name="Vertailu",
+                line=dict(color="#888", dash="dash", width=1), mode="lines",
+                hovertemplate="Vertailu: %{y:.0f}<extra></extra>"))
+            fig4w.add_trace(go.Scatter(x=ajat_4w, y=yht_4w, name="Yhteensä",
+                line=dict(color="#FF8C00", width=1.5), mode="lines",
+                hovertemplate="Yhteensä: %{y:.0f}<extra></extra>"))
+            fig4w.add_trace(go.Scatter(x=ajat_4w, y=s1_4w, name="S1",
+                line=dict(color="#2E6FBF", width=1.5), mode="lines",
+                hovertemplate="S1: %{y:.0f}<extra></extra>"))
+            fig4w.add_trace(go.Scatter(x=ajat_4w, y=s2_4w, name="S2",
+                line=dict(color="#2D9E47", width=1.5), mode="lines",
+                hovertemplate="S2: %{y:.0f}<extra></extra>"))
+            fig4w.update_layout(
+                paper_bgcolor="#0f0f1a", plot_bgcolor="#1a1a2e", font=dict(color="#e0e0ff"),
+                xaxis=dict(title="Aika", gridcolor="#2a2a4a", tickformat="%d.%m."),
+                yaxis=dict(title="Ohituksia / tunti", gridcolor="#2a2a4a"),
+                legend=dict(bgcolor="#1a1a2e", bordercolor="#3a3a5c", borderwidth=1),
+                hovermode="x unified", height=450, margin=dict(l=60, r=20, t=20, b=60),
+            )
+            st.plotly_chart(fig4w, use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────────
 # KELIKAMERAT
