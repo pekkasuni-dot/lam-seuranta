@@ -692,7 +692,7 @@ def nayta_aikajana_modal(sid, nimi, tms_num, nyt_fin):
                 hovertemplate="S2: %{y:.0f}<extra></extra>"))
             fig4w.update_layout(
                 paper_bgcolor="#0f0f1a", plot_bgcolor="#1a1a2e", font=dict(color="#e0e0ff"),
-                xaxis=dict(title="Aika", gridcolor="#2a2a4a", tickformat="%d.%m.", xhoverformat="%d.%m. %H:%M"),
+                xaxis=dict(title="Aika", gridcolor="#2a2a4a", tickformat="%d.%m.", hoverformat="%d.%m. %H:%M"),
                 yaxis=dict(title="Ohituksia / tunti", gridcolor="#2a2a4a"),
                 legend=dict(bgcolor="#1a1a2e", bordercolor="#3a3a5c", borderwidth=1),
                 hovermode="x unified", height=450, margin=dict(l=60, r=20, t=20, b=60),
