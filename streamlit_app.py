@@ -797,7 +797,7 @@ def main():
     h1, h2, h3 { color: #e0e0ff; }
     [data-testid="stMainMenu"] { display: none !important; }
     iframe[title="streamlit_folium.st_folium"] {
-        height: calc(100vh - 340px) !important;
+        height: calc(100vh - 380px) !important;
         min-height: 450px !important;
         max-height: 1400px !important;
     }
