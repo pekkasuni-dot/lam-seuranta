@@ -640,11 +640,12 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat, kelikamerat=None):
         name="Satelliitti",
     ).add_to(kartta)
     folium.TileLayer(
-        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Reference_Overlay/MapServer/tile/{z}/{y}/{x}",
         attr="Esri",
         name="Rajat ja nimet",
         overlay=True,
         show=False,
+        opacity=1.0,
     ).add_to(kartta)
     from folium.plugins import Fullscreen
     Fullscreen(position="topleft", title="Koko ruutu",
