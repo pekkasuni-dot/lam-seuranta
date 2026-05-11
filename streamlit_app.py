@@ -776,8 +776,11 @@ def main():
     .stSidebar { background: #1a1a2e; }
     h1, h2, h3 { color: #e0e0ff; }
     header[data-testid="stHeader"] { display: none !important; }
-    button[data-testid="collapsedControl"] { display: none !important; }
-    section[data-testid="stSidebarCollapseButton"] { display: none !important; }
+    [data-testid="collapsedControl"] { display: none !important; }
+    [data-testid="stSidebarCollapseButton"] { display: none !important; }
+    button[aria-label="Collapse sidebar"] { display: none !important; }
+    button[aria-label="Expand sidebar"] { display: none !important; }
+    button[kind="header"] { display: none !important; }
     </style>""", unsafe_allow_html=True)
 
     with st.sidebar:
