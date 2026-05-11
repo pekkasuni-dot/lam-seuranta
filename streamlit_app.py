@@ -796,6 +796,11 @@ def main():
     .stSidebar { background: #1a1a2e; }
     h1, h2, h3 { color: #e0e0ff; }
     [data-testid="stMainMenu"] { display: none !important; }
+    iframe[title="streamlit_folium.st_folium"] {
+        height: calc(100vh - 260px) !important;
+        min-height: 450px !important;
+        max-height: 1400px !important;
+    }
     </style>""", unsafe_allow_html=True)
 
     with st.sidebar:
@@ -945,7 +950,7 @@ def main():
         st.success("✅ Liikenne normaalilla tasolla")
 
     st.markdown("*Klikkaa pistettä popup-tiedoille. Aikajana: valitse asema sivupalkista.*")
-    st_folium(kartta, width="100%", height=750, returned_objects=[])
+    st_folium(kartta, width="100%", height=1400, returned_objects=[])
 
     if "aikajana_sid" in st.session_state:
         _sid = st.session_state.pop("aikajana_sid")
