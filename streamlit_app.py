@@ -364,6 +364,58 @@ def hae_baselineet(asemat_tuple, tunti, normaalit_pvmt_tuple):
             t.join()
     return tulokset
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def hae_jakso_csv(tms_num, pvmt_tuple):
+    """Hakee useamman päivän CSV-datan rinnakkain (puuttuvat Supabasesta)."""
+    if not pvmt_tuple or tms_num is None:
+        return []
+    tulokset = []
+    lukko    = threading.Lock()
+
+    def _hae(pvm_str):
+        pvm_obj = date.fromisoformat(pvm_str)
+        yy  = str(pvm_obj.year)[-2:].lstrip("0") or "0"
+        doy = pvm_obj.timetuple().tm_yday
+        url = f"{BASE_URL}/api/tms/v1/history/raw/lamraw_{tms_num}_{yy}_{doy}.csv"
+        raw = hae_bytes(url, timeout=20)
+        if raw is None:
+            return
+        laskuri = {}
+        try:
+            for rivi in csv.reader(
+                    io.StringIO(raw.decode("utf-8", errors="replace")), delimiter=";"):
+                if len(rivi) < 13:
+                    continue
+                try:
+                    t = int(rivi[3]); su = int(rivi[9]); f = int(rivi[12])
+                    if f != 0 or t not in range(24):
+                        continue
+                    if t not in laskuri:
+                        laskuri[t] = {"s1": 0, "s2": 0}
+                    if su == 1:   laskuri[t]["s1"] += 1
+                    elif su == 2: laskuri[t]["s2"] += 1
+                except ValueError:
+                    continue
+        except Exception:
+            return
+        rivit = []
+        for t, v in laskuri.items():
+            aika = datetime(pvm_obj.year, pvm_obj.month, pvm_obj.day,
+                            t, 0, 0, tzinfo=timezone.utc)
+            rivit.append({"tunti": t, "aika": aika,
+                          "s1": float(v["s1"]), "s2": float(v["s2"]),
+                          "yht": float(v["s1"]+v["s2"])})
+        with lukko:
+            tulokset.extend(rivit)
+
+    for i in range(0, len(pvmt_tuple), 8):
+        saikeet = [threading.Thread(target=_hae, args=(p,), daemon=True)
+                   for p in pvmt_tuple[i:i+8]]
+        for s in saikeet: s.start()
+        for s in saikeet: s.join()
+
+    return sorted(tulokset, key=lambda x: x["aika"])
+
 @st.cache_data(ttl=300, show_spinner=False)
 def hae_eilen_csv(tms_num, eilen_str):
     eilen   = date.fromisoformat(eilen_str)
@@ -504,7 +556,7 @@ def nayta_aikajana_modal(sid, nimi, tms_num, nyt_fin):
 
     nyt_fin_str = nyt_fin.replace(minute=0, second=0, microsecond=0).isoformat()
     eilen       = (nyt_fin - timedelta(days=1)).date()
-    alku_4w     = (nyt_fin - timedelta(weeks=4)).date()
+    alku_4w     = (nyt_fin - timedelta(weeks=3)).date()
 
     with st.spinner("Haetaan data..."):
         baseline    = hae_24h_baseline(tms_num, nyt_fin_str)
@@ -512,6 +564,13 @@ def nayta_aikajana_modal(sid, nimi, tms_num, nyt_fin):
         sb_eilen    = hae_paiva_supabasesta(sid, eilen.isoformat())
         csv_eilen   = hae_eilen_csv(tms_num, eilen.isoformat())
         jakso_data  = hae_jakso_supabasesta(sid, alku_4w.isoformat(), eilen.isoformat())
+        sb_pvmt     = {r["aika"].date().isoformat() for r in jakso_data}
+        d, puuttuvat = alku_4w, []
+        while d <= eilen:
+            if d.isoformat() not in sb_pvmt:
+                puuttuvat.append(d.isoformat())
+            d += timedelta(days=1)
+        csv_jakso = hae_jakso_csv(tms_num, tuple(puuttuvat)) if puuttuvat else []
 
     sb_tunnit  = {r["tunti"] for r in sb_eilen}
     eilen_data = sorted(
@@ -519,7 +578,7 @@ def nayta_aikajana_modal(sid, nimi, tms_num, nyt_fin):
         key=lambda x: x["aika"],
     )
 
-    tab24h, tab4w = st.tabs(["📊 24 tuntia", "📅 4 viikkoa"])
+    tab24h, tab4w = st.tabs(["📊 24 tuntia", "📅 3 viikkoa"])
 
     # ── 24 h ──────────────────────────────────────────────────────
     with tab24h:
@@ -589,23 +648,26 @@ def nayta_aikajana_modal(sid, nimi, tms_num, nyt_fin):
             for col, (label, val, delta) in zip(st.columns(3), metrics):
                 col.metric(label, val, delta)
 
-    # ── 4 viikkoa ─────────────────────────────────────────────────
+    # ── 3 viikkoa ─────────────────────────────────────────────────
     with tab4w:
-        kaikki_4w  = list(jakso_data)
-        kaikki_4w += [{**r} for r in tanaan_data]
+        kaikki_4w  = list(jakso_data) + csv_jakso + list(tanaan_data)
         data_4w = sorted(kaikki_4w, key=lambda x: x["aika"])
 
         if not data_4w:
             st.warning("Historiadataa ei saatavilla 4 viikon näkymässä.")
         else:
-            st.caption(f"{len(data_4w)} datapistettä · {alku_4w} – {nyt_fin.date()}")
+            st.caption(
+                f"{len(data_4w)} datapistettä · {alku_4w} – {nyt_fin.date()} "
+                f"· SB: {len(jakso_data)} h, CSV: {len(csv_jakso)} h"
+            )
 
             ajat_4w = [r["aika"] for r in data_4w]
             s1_4w   = [r["s1"]  for r in data_4w]
             s2_4w   = [r["s2"]  for r in data_4w]
             yht_4w  = [r["yht"] for r in data_4w]
 
-            bl_alku_4w  = datetime(alku_4w.year, alku_4w.month, alku_4w.day, 0, tzinfo=timezone.utc)
+            ensimmainen = data_4w[0]["aika"].replace(hour=0, minute=0, second=0, microsecond=0)
+            bl_alku_4w  = ensimmainen
             bl_loppu_4w = datetime(nyt_fin.year, nyt_fin.month, nyt_fin.day, nyt_fin.hour, tzinfo=timezone.utc)
             bl_ajat_4w, bl_yht_4w = [], []
             t = bl_alku_4w
