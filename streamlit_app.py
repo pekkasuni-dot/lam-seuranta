@@ -625,7 +625,7 @@ def hae_kelikamerat():
 # KARTTA
 # ─────────────────────────────────────────────────────────────────
 
-def luo_kartta(asemat, rtdata, baselineet, kulmat, kelikamerat=None, show_tiet=True, show_rajat=True):
+def luo_kartta(asemat, rtdata, baselineet, kulmat, kelikamerat=None):
     kartta = folium.Map(
         location=[65.5, 26.0], zoom_start=6,
         tiles="CartoDB dark_matter", control_scale=True,
@@ -644,16 +644,14 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat, kelikamerat=None, show_tiet=T
         attr="Esri",
         name="Tiet",
         overlay=True,
-        show=show_tiet,
-        control=False,
+        show=True,
     ).add_to(kartta)
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
         attr="Esri",
         name="Rajat ja nimet",
         overlay=True,
-        show=show_rajat,
-        control=False,
+        show=True,
     ).add_to(kartta)
     from folium.plugins import Fullscreen
     Fullscreen(position="topleft", title="Koko ruutu",
@@ -818,10 +816,6 @@ def main():
             st.cache_data.clear()
             st.rerun()
 
-        st.markdown("### 🗺️ Karttatasot")
-        show_tiet  = st.checkbox("🛣️ Tiet",          value=True, key="layer_tiet")
-        show_rajat = st.checkbox("🌍 Rajat ja nimet", value=True, key="layer_rajat")
-
         st.markdown("---")
         with st.expander("ℹ️ Vertailutiedot", expanded=False):
             _pvmt   = st.session_state.get("vertailu_pvmt", [])
@@ -895,9 +889,7 @@ def main():
 
     with st.spinner("Piirretään kartta..."):
         kartta, yht_lkm = luo_kartta(asemat, rtdata, baselineet, kulmat,
-                                      kelikamerat=kelikamerat,
-                                      show_tiet=show_tiet,
-                                      show_rajat=show_rajat)
+                                      kelikamerat=kelikamerat)
 
     st.markdown("<div style='padding-top:0.5rem'></div>", unsafe_allow_html=True)
 
