@@ -894,7 +894,8 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat, kelikamerat=None, tiedotteet=
             tooltip=f"📷 {kamera['nimi']}",
         ).add_to(kamera_layer)
     kamera_layer.add_to(kartta)
-          if tiedotteet:
+
+    if tiedotteet:
         lisaa_tiedotteet_kartalle(kartta, tiedotteet, show=True)
 
     folium.LayerControl(collapsed=True, position="topright").add_to(kartta)
@@ -943,6 +944,7 @@ def main():
             _ohit   = st.session_state.get("vertailu_ohitetut", [])
             _metodi = st.session_state.get("vertailu_metodi", "")
             _kpl    = st.session_state.get("kelikamerat_maara", 0)
+            _tied   = st.session_state.get("tiedotteet_maara", 0)
             if _pvmt:
                 st.markdown(f"**Päivät:** {', '.join(str(p) for p in _pvmt)}")
             if _ohit:
@@ -951,9 +953,9 @@ def main():
                 st.markdown(f"**Metodi:** {_metodi}")
             if _kpl:
                 st.markdown(f"**Kelikameroita alueella:** {_kpl} kpl")
-                _tied = st.session_state.get("tiedotteet_maara", 0)
             if _tied:
-                st.markdown(f"**Liikennetiedotteita alueella:** {_tied} kpl")                  
+                st.markdown(f"**Liikennetiedotteita alueella:** {_tied} kpl")
+
         st.markdown("---")
         st.markdown("### 📊 Aikajana")
         st.markdown("*Valitse asema:*")
@@ -1009,13 +1011,13 @@ def main():
         kelikamerat = hae_kelikamerat()
     except Exception:
         kelikamerat = []
-    st.session_state["kelikamerat_maara"] = len(kelikamerat) 
+    st.session_state["kelikamerat_maara"] = len(kelikamerat)
 
     try:
         tiedotteet = hae_alueen_tiedotteet(ALUE_BBOX)
     except Exception:
         tiedotteet = []
-    st.session_state["tiedotteet_maara"] = len(tiedotteet)      
+    st.session_state["tiedotteet_maara"] = len(tiedotteet)
 
     with st.spinner("Piirretään kartta..."):
         kartta, yht_lkm = luo_kartta(asemat, rtdata, baselineet, kulmat,
