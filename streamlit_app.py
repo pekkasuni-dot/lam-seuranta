@@ -21,6 +21,7 @@ import urllib.request
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 from streamlit_autorefresh import st_autorefresh
+from liikennetiedotteet import hae_alueen_tiedotteet, lisaa_tiedotteet_kartalle
 
 st.set_page_config(
     page_title="Liikenteen tilannekuva",
@@ -738,7 +739,7 @@ def hae_kelikamerat():
 # KARTTA
 # ─────────────────────────────────────────────────────────────────
 
-def luo_kartta(asemat, rtdata, baselineet, kulmat, kelikamerat=None):
+def luo_kartta(asemat, rtdata, baselineet, kulmat, kelikamerat=None, tiedotteet=None):
     kartta = folium.Map(
         location=[65.5, 26.0], zoom_start=6,
         tiles="CartoDB dark_matter", control_scale=True,
@@ -893,6 +894,8 @@ def luo_kartta(asemat, rtdata, baselineet, kulmat, kelikamerat=None):
             tooltip=f"📷 {kamera['nimi']}",
         ).add_to(kamera_layer)
     kamera_layer.add_to(kartta)
+          if tiedotteet:
+        lisaa_tiedotteet_kartalle(kartta, tiedotteet, show=True)
 
     folium.LayerControl(collapsed=True, position="topright").add_to(kartta)
     return kartta, yht_lkm
@@ -948,6 +951,9 @@ def main():
                 st.markdown(f"**Metodi:** {_metodi}")
             if _kpl:
                 st.markdown(f"**Kelikameroita alueella:** {_kpl} kpl")
+                _tied = st.session_state.get("tiedotteet_maara", 0)
+            if _tied:
+                st.markdown(f"**Liikennetiedotteita alueella:** {_tied} kpl")                  
         st.markdown("---")
         st.markdown("### 📊 Aikajana")
         st.markdown("*Valitse asema:*")
@@ -1003,11 +1009,18 @@ def main():
         kelikamerat = hae_kelikamerat()
     except Exception:
         kelikamerat = []
-    st.session_state["kelikamerat_maara"] = len(kelikamerat)
+    st.session_state["kelikamerat_maara"] = len(kelikamerat) 
+
+    try:
+        tiedotteet = hae_alueen_tiedotteet(ALUE_BBOX)
+    except Exception:
+        tiedotteet = []
+    st.session_state["tiedotteet_maara"] = len(tiedotteet)      
 
     with st.spinner("Piirretään kartta..."):
         kartta, yht_lkm = luo_kartta(asemat, rtdata, baselineet, kulmat,
-                                      kelikamerat=kelikamerat)
+                                      kelikamerat=kelikamerat,
+                                      tiedotteet=tiedotteet)
 
     st.markdown("<div style='padding-top:0.5rem'></div>", unsafe_allow_html=True)
 
